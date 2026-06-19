@@ -1,0 +1,26 @@
+{
+  "instructionText": "Answers of all questions are to be given in the Answer-Book given to you. 15 minutes time has been allotted to read this Question Paper. The question paper will be distributed at 02:15 p.m. From 02:15 p.m. to 02:30 p.m., the students will read the question paper only and will not write any answer on the Answer-Book during this period.",
+  "sections": [
+    {
+      "sectionName": "Section A",
+      "sectionOrder": 1,
+      "startsAtQuestion": 1,
+      "endsAtQuestion": 28,
+      "evidence": [
+        "Question Nos. 1 to 17 – Multiple Choice type Questions (MCQs) carrying 1 mark each. Select and write the most appropriate option out of the four options given in each of these questions.",
+        "Question Nos. 18 to 28 – Objective type questions. Q. No. 18 to 27 carry 2 marks each (with 2 sub-parts of 1 mark each) and Q. No. 28 carries 5 marks (with 5 sub-parts of 1 mark each). Attempt these questions as per the instructions given for each of the questions 18 to 28."
+      ]
+    },
+    {
+      "sectionName": "Section B",
+      "sectionOrder": 2,
+      "startsAtQuestion": 29,
+      "endsAtQuestion": 44,
+      "evidence": [
+        "Question Nos. 29 to 37 – Very Short Answer type questions carrying 2 marks each.",
+        "Question Nos. 38 to 42 – Short Answer type questions carrying 3 marks each.",
+        "Question Nos. 43 and 44 – Long Answer type questions carrying 5 marks each."
+      ]
+    }
+  ]
+}
