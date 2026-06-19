@@ -1,0 +1,39 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+const distDir = join(process.cwd(), 'dist');
+mkdirSync(distDir, { recursive: true });
+
+const webConfig = `<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <system.webServer>
+    <rewrite>
+      <rules>
+        <rule name="Standard Parser API proxy" stopProcessing="true">
+          <match url="^standard-api/(.*)$" />
+          <action type="Rewrite" url="http://127.0.0.1:8070/{R:1}" />
+        </rule>
+        <rule name="Language Parser API proxy" stopProcessing="true">
+          <match url="^language-api/(.*)$" />
+          <action type="Rewrite" url="http://127.0.0.1:8090/{R:1}" />
+        </rule>
+        <rule name="Question Crafter API proxy" stopProcessing="true">
+          <match url="^question-crafter-api/(.*)$" />
+          <action type="Rewrite" url="http://127.0.0.1:8100/{R:1}" />
+        </rule>
+        <rule name="React SPA fallback" stopProcessing="true">
+          <match url=".*" />
+          <conditions logicalGrouping="MatchAll">
+            <add input="{REQUEST_FILENAME}" matchType="IsFile" negate="true" />
+            <add input="{REQUEST_FILENAME}" matchType="IsDirectory" negate="true" />
+          </conditions>
+          <action type="Rewrite" url="/index.html" />
+        </rule>
+      </rules>
+    </rewrite>
+  </system.webServer>
+</configuration>
+`;
+
+writeFileSync(join(distDir, 'web.config'), webConfig, 'utf8');
+console.log('Created IIS web.config');

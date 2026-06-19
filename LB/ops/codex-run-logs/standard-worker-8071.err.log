@@ -1,0 +1,63 @@
+INFO:     Started server process [37708]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8071 (Press CTRL+C to quit)
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "C:\Users\lakshmibhaskar.v\Downloads\LB\.venv_qbank\Lib\site-packages\uvicorn\protocols\http\httptools_impl.py", line 421, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\lakshmibhaskar.v\Downloads\LB\.venv_qbank\Lib\site-packages\uvicorn\middleware\proxy_headers.py", line 62, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\lakshmibhaskar.v\Downloads\LB\.venv_qbank\Lib\site-packages\fastapi\applications.py", line 1162, in __call__
+    await super().__call__(scope, receive, send)
+  File "C:\Users\lakshmibhaskar.v\Downloads\LB\.venv_qbank\Lib\site-packages\starlette\applications.py", line 90, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\lakshmibhaskar.v\Downloads\LB\.venv_qbank\Lib\site-packages\starlette\middleware\errors.py", line 186, in __call__
+    raise exc
+  File "C:\Users\lakshmibhaskar.v\Downloads\LB\.venv_qbank\Lib\site-packages\starlette\middleware\errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "C:\Users\lakshmibhaskar.v\Downloads\LB\.venv_qbank\Lib\site-packages\starlette\middleware\cors.py", line 88, in __call__
+    await self.app(scope, receive, send)
+  File "C:\Users\lakshmibhaskar.v\Downloads\LB\.venv_qbank\Lib\site-packages\starlette\middleware\exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "C:\Users\lakshmibhaskar.v\Downloads\LB\.venv_qbank\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\lakshmibhaskar.v\Downloads\LB\.venv_qbank\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\lakshmibhaskar.v\Downloads\LB\.venv_qbank\Lib\site-packages\fastapi\middleware\asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "C:\Users\lakshmibhaskar.v\Downloads\LB\.venv_qbank\Lib\site-packages\starlette\routing.py", line 660, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\lakshmibhaskar.v\Downloads\LB\.venv_qbank\Lib\site-packages\starlette\routing.py", line 680, in app
+    await route.handle(scope, receive, send)
+  File "C:\Users\lakshmibhaskar.v\Downloads\LB\.venv_qbank\Lib\site-packages\fastapi\routing.py", line 1220, in handle
+    await super().handle(scope, receive, send)
+  File "C:\Users\lakshmibhaskar.v\Downloads\LB\.venv_qbank\Lib\site-packages\starlette\routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "C:\Users\lakshmibhaskar.v\Downloads\LB\.venv_qbank\Lib\site-packages\fastapi\routing.py", line 143, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "C:\Users\lakshmibhaskar.v\Downloads\LB\.venv_qbank\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\lakshmibhaskar.v\Downloads\LB\.venv_qbank\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\lakshmibhaskar.v\Downloads\LB\.venv_qbank\Lib\site-packages\fastapi\routing.py", line 129, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "C:\Users\lakshmibhaskar.v\Downloads\LB\.venv_qbank\Lib\site-packages\fastapi\routing.py", line 683, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\lakshmibhaskar.v\Downloads\LB\.venv_qbank\Lib\site-packages\fastapi\routing.py", line 337, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\lakshmibhaskar.v\Downloads\LB\F52.py", line 2018, in export_zip
+    df.to_excel(excel_path, index=False)
+  File "C:\Users\lakshmibhaskar.v\Downloads\LB\.venv_qbank\Lib\site-packages\pandas\core\generic.py", line 2312, in to_excel
+    formatter.write(
+  File "C:\Users\lakshmibhaskar.v\Downloads\LB\.venv_qbank\Lib\site-packages\pandas\io\formats\excel.py", line 1003, in write
+    writer = ExcelWriter(
+             ^^^^^^^^^^^^
+  File "C:\Users\lakshmibhaskar.v\Downloads\LB\.venv_qbank\Lib\site-packages\pandas\io\excel\_openpyxl.py", line 58, in __init__
+    from openpyxl.workbook import Workbook
+ModuleNotFoundError: No module named 'openpyxl'
