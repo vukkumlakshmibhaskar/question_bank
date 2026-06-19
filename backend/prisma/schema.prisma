@@ -1,0 +1,675 @@
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+enum RoleType {
+  ADMIN
+  TEACHER
+}
+
+enum QuestionType {
+  MCQ
+  TRUE_FALSE
+  SHORT_ANSWER
+  ESSAY
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum QuestionStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum TestPaperStatus {
+  DRAFT
+  SAVED
+  QUESTIONS_GENERATED
+  POSTED
+  ARCHIVED
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// 1. User Model
+model User {
+  id                  Int                  @id @default(autoincrement())
+  name                String
+  email               String               @unique(map: "User_email_key")
+  password            String
+  isActive            Boolean              @default(true)
+  refreshToken        String?              @db.Text
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  isDeleted           Boolean              @default(false)
+  deletedAt           DateTime?
+  userRoles           UserRole[]
+  questionBanks       QuestionBank[]
+  questions           Question[]
+  uploadedFiles       UploadFile[]
+  processingJobs      ProcessingJob[]
+  reviewsReviewed     ExtractionReview[]
+  auditLogs           AuditLog[]
+  testPapers          TestPaper[]
+  assessmentTemplates AssessmentTemplate[]
+  evaluators          Evaluator[]
+  evaluatorDocuments  EvaluatorDocument[]
+  assignedSubjects    UserSubject[]
+
+  @@map("users")
+}
+
+// 2. Role Model
+model Role {
+  id              Int              @id @default(autoincrement())
+  name            RoleType         @unique
+  description     String?          @db.VarChar(255)
+  isActive        Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @default(now()) @updatedAt
+  isDeleted       Boolean          @default(false)
+  deletedAt       DateTime?
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  @@map("roles")
+}
+
+// 3. Permission Model
+model Permission {
+  id              Int              @id @default(autoincrement())
+  name            String           @unique
+  description     String?          @db.VarChar(255)
+  isActive        Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @default(now()) @updatedAt
+  isDeleted       Boolean          @default(false)
+  deletedAt       DateTime?
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+// 4. UserRole Join Table
+model UserRole {
+  userId    Int
+  roleId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      Role      @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+// 5. RolePermission Join Table
+model RolePermission {
+  roleId       Int
+  permissionId Int
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  isActive     Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @default(now()) @updatedAt
+  isDeleted    Boolean    @default(false)
+  deletedAt    DateTime?
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+// 6. Subject Model
+model Subject {
+  id          Int         @id @default(autoincrement())
+  name        String      @unique
+  description String?     @db.Text
+  isActive    Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @default(now()) @updatedAt
+  isDeleted   Boolean     @default(false)
+  deletedAt   DateTime?
+  chapters    Chapter[]
+  testPapers  TestPaper[]
+  assignedUsers UserSubject[]
+
+  @@map("subjects")
+}
+
+model UserSubject {
+  userId    Int
+  subjectId Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject   Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@id([userId, subjectId])
+  @@index([subjectId])
+  @@map("user_subjects")
+}
+
+// 7. Chapter Model
+model Chapter {
+  id          Int         @id @default(autoincrement())
+  name        String
+  description String?     @db.Text
+  subjectId   Int
+  subject     Subject     @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  isActive    Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @default(now()) @updatedAt
+  isDeleted   Boolean     @default(false)
+  deletedAt   DateTime?
+  concepts    Concept[]
+  testPapers  TestPaper[]
+
+  @@map("chapters")
+}
+
+// 8. Concept Model
+model Concept {
+  id          Int         @id @default(autoincrement())
+  name        String
+  description String?     @db.Text
+  chapterId   Int
+  chapter     Chapter     @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  isActive    Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @default(now()) @updatedAt
+  isDeleted   Boolean     @default(false)
+  deletedAt   DateTime?
+  questions   Question[]
+  testPapers  TestPaper[]
+
+  @@map("concepts")
+}
+
+// 9. QuestionBank Model
+model QuestionBank {
+  id            Int            @id @default(autoincrement())
+  name          String
+  description   String?        @db.Text
+  isPublic      Boolean        @default(false)
+  academicYear  String?        @db.VarChar(20)
+  sscClass      String?        @db.VarChar(100)
+  jobRole       String?        @db.VarChar(120)
+  subjectCode   String?        @db.VarChar(50)
+  subjectName   String?        @db.VarChar(150)
+  createdById   Int
+  createdBy     User           @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  bankQuestions BankQuestion[]
+
+  @@index([academicYear])
+  @@index([sscClass])
+  @@index([jobRole])
+  @@index([subjectCode])
+  @@index([subjectName])
+  @@map("question_banks")
+}
+
+// 10. Question Model
+model Question {
+  id                 Int                 @id @default(autoincrement())
+  content            String              @db.Text
+  imageUrl           String?             @db.VarChar(500)
+  type               QuestionType        @default(MCQ)
+  questionNo         String?             @db.VarChar(80)
+  questionHeader     String?             @db.VarChar(255)
+  sectionName        String?             @db.VarChar(120)
+  sectionOrder       Int?
+  sourceQuestionNo   String?             @db.VarChar(80)
+  sourcePageNo       Int?
+  sectionConfidence  String?             @db.VarChar(20)
+  sectionEvidence    Json?
+  subpartCount       Int?
+  choiceGroupKey     String?             @db.VarChar(120)
+  questionTypeLabel  String?             @db.VarChar(120)
+  objectiveType      String?             @db.VarChar(80)
+  marks              Int?
+  sourceFileName     String?             @db.VarChar(255)
+  sourceReference    String?             @db.VarChar(255)
+  sourceType         String?             @db.VarChar(40)
+  importJobId        Int?
+  extractionReviewId Int?
+  difficulty         Difficulty          @default(MEDIUM)
+  status             QuestionStatus      @default(DRAFT)
+  explanation        String?             @db.Text
+  createdById        Int
+  createdBy          User                @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  conceptId          Int
+  concept            Concept             @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+  sourceFileId       Int?
+  sourceFile         UploadFile?         @relation("QuestionSourceFile", fields: [sourceFileId], references: [id], onDelete: SetNull)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  answers            Answer[]
+  bankQuestions      BankQuestion[]
+  attachments        UploadFile[]
+  testPaperQuestions TestPaperQuestion[]
+
+  @@index([sourceFileId])
+  @@index([questionNo])
+  @@index([questionHeader])
+  @@index([questionTypeLabel])
+  @@index([objectiveType])
+  @@index([marks])
+  @@index([sourceFileName])
+  @@index([sourceType])
+  @@index([importJobId])
+  @@index([extractionReviewId])
+  @@index([sectionName])
+  @@index([sectionOrder])
+  @@index([sourceQuestionNo])
+  @@map("questions")
+}
+
+// 11. Answer Model
+model Answer {
+  id          Int      @id @default(autoincrement())
+  questionId  Int
+  question    Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  content     String   @db.Text
+  imageUrl    String?  @db.VarChar(500)
+  isCorrect   Boolean  @default(false)
+  explanation String?  @db.Text
+
+  @@map("answers")
+}
+
+// 12. UploadFile Model
+model UploadFile {
+  id                   Int                @id @default(autoincrement())
+  fileName             String
+  filePath             String
+  fileSize             Int
+  mimeType             String
+  driveFileId          String?
+  processedDriveFileId String?
+  processingStatus     JobStatus          @default(PENDING)
+  uploadedById         Int
+  uploadedBy           User               @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
+  questionId           Int?
+  question             Question?          @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  createdAt            DateTime           @default(now())
+  processingJobs       ProcessingJob[]
+  extractionReviews    ExtractionReview[]
+  sourcedQuestions     Question[]         @relation("QuestionSourceFile")
+
+  @@map("upload_files")
+}
+
+// 13. ProcessingJob Model
+model ProcessingJob {
+  id           Int         @id @default(autoincrement())
+  uploadFileId Int?
+  uploadFile   UploadFile? @relation(fields: [uploadFileId], references: [id], onDelete: SetNull)
+  status       JobStatus   @default(PENDING)
+  startedAt    DateTime    @default(now())
+  completedAt  DateTime?
+  errorMessage String?     @db.Text
+  createdById  Int
+  createdBy    User        @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@map("processing_jobs")
+}
+
+// 14. BankQuestion Junction Model (Many-to-Many between QuestionBank and Question)
+model BankQuestion {
+  bankId     Int
+  questionId Int
+  bank       QuestionBank @relation(fields: [bankId], references: [id], onDelete: Cascade)
+  question   Question     @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  sortOrder  Int          @default(0)
+
+  @@id([bankId, questionId])
+  @@map("bank_questions")
+}
+
+// 15. ReviewStatus Enum
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// 16. ExtractionReview Model
+model ExtractionReview {
+  id             Int          @id @default(autoincrement())
+  uploadFileId   Int
+  uploadFile     UploadFile   @relation(fields: [uploadFileId], references: [id], onDelete: Cascade)
+  version        Int          @default(1)
+  status         ReviewStatus @default(PENDING)
+  promptUsed     String?      @db.Text
+  geminiResponse Json?
+  extractedData  Json // Holds RAW hierarchical JSON: chapters -> concepts -> questions
+  reviewedById   Int?
+  reviewedBy     User?        @relation(fields: [reviewedById], references: [id], onDelete: SetNull)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @default(now()) @updatedAt
+
+  @@unique([uploadFileId, version])
+  @@map("extraction_reviews")
+}
+
+// 17. AuditLog Model
+model AuditLog {
+  id         Int      @id @default(autoincrement())
+  userId     Int?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action     String // e.g., "UPLOAD_FILE", "EDIT_REVIEW", "APPROVE_REVIEW", "REJECT_REVIEW"
+  entityType String // e.g., "UploadFile", "ExtractionReview"
+  entityId   Int
+  oldValue   Json?
+  newValue   Json?
+  createdAt  DateTime @default(now())
+
+  @@map("audit_logs")
+}
+
+model TelescopeRequestLog {
+  id              Int      @id @default(autoincrement())
+  requestId       String?  @db.VarChar(80)
+  traceId         String?  @db.VarChar(80)
+  method          String   @db.VarChar(12)
+  path            String   @db.VarChar(500)
+  route           String?  @db.VarChar(255)
+  frontendRoute   String?  @db.VarChar(500)
+  statusCode      Int
+  durationMs      Int
+  userId          Int?
+  userRole        String?  @db.VarChar(40)
+  userEmail       String?  @db.VarChar(255)
+  ipAddress       String?  @db.VarChar(120)
+  userAgent       String?  @db.VarChar(500)
+  queryParams     Json?
+  requestHeaders  Json?
+  requestPayload  Json?
+  responseHeaders Json?
+  responseBody    Json?
+  tags            Json?
+  memoryMb        Float?
+  createdAt       DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([traceId])
+  @@index([method])
+  @@index([statusCode])
+  @@index([userId])
+  @@map("telescope_request_logs")
+}
+
+model TelescopeErrorLog {
+  id                   Int      @id @default(autoincrement())
+  requestId            String?  @db.VarChar(80)
+  traceId              String?  @db.VarChar(80)
+  method               String   @db.VarChar(12)
+  path                 String   @db.VarChar(500)
+  statusCode           Int?
+  message              String   @db.Text
+  stack                String?  @db.Text
+  userId               Int?
+  userRole             String?  @db.VarChar(40)
+  userEmail            String?  @db.VarChar(255)
+  ipAddress            String?  @db.VarChar(120)
+  userAgent            String?  @db.VarChar(500)
+  sourceLayer          String?  @db.VarChar(40)
+  sourceModule         String?  @db.VarChar(120)
+  sourceService        String?  @db.VarChar(120)
+  errorCode            String?  @db.VarChar(80)
+  errorType            String?  @db.VarChar(160)
+  severity             String?  @db.VarChar(20)
+  confidence           String?  @db.VarChar(20)
+  frontendRoute        String?  @db.VarChar(500)
+  backendRoute         String?  @db.VarChar(255)
+  databaseProvider     String?  @db.VarChar(80)
+  externalEndpoint     String?  @db.VarChar(500)
+  userAction           String?  @db.VarChar(255)
+  classificationReason String?  @db.Text
+  originFile           String?  @db.VarChar(500)
+  originLine           Int?
+  originColumn         Int?
+  originFunction       String?  @db.VarChar(255)
+  stackPreview         String?  @db.Text
+  context              Json?
+  createdAt            DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([traceId])
+  @@index([sourceLayer])
+  @@index([severity])
+  @@index([statusCode])
+  @@index([userId])
+  @@map("telescope_error_logs")
+}
+
+// 18. TestPaper Model
+model TestPaper {
+  id                         Int                 @id @default(autoincrement())
+  title                      String
+  description                String?             @db.Text
+  subjectId                  Int
+  subject                    Subject             @relation(fields: [subjectId], references: [id])
+  chapterId                  Int?
+  chapter                    Chapter?            @relation(fields: [chapterId], references: [id])
+  conceptId                  Int?
+  concept                    Concept?            @relation(fields: [conceptId], references: [id])
+  classGrade                 String              @db.VarChar(50)
+  subClass                   String?             @db.VarChar(80)
+  examNature                 String?             @db.VarChar(40)
+  examDate                   DateTime?
+  codeNo                     String?             @db.VarChar(80)
+  timingText                 String?             @db.VarChar(120)
+  templateId                 Int?
+  template                   AssessmentTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  totalMarks                 Int
+  durationMinutes            Int
+  difficultyLevel            Difficulty          @default(MEDIUM)
+  instructions               String?             @db.Text
+  defaultGenerationMode      String?             @db.VarChar(20)
+  defaultSetCount            Int?
+  defaultDifficultyCounts    Json?
+  defaultMarksByDifficulty   Json?
+  defaultQuestionBankIds     Json?
+  defaultReplaceExistingSets Boolean             @default(true)
+  status                     TestPaperStatus     @default(DRAFT)
+  createdById                Int
+  createdBy                  User                @relation(fields: [createdById], references: [id])
+  createdAt                  DateTime            @default(now())
+  updatedAt                  DateTime            @updatedAt
+
+  sets               TestPaperSet[]
+  testPaperQuestions TestPaperQuestion[]
+  blueprintSections  AssessmentBlueprintSection[]
+
+  @@index([examDate])
+  @@index([codeNo])
+  @@index([examNature])
+  @@index([templateId])
+  @@map("test_papers")
+}
+
+// 19. AssessmentTemplate Model
+model AssessmentTemplate {
+  id                         Int      @id @default(autoincrement())
+  name                       String   @db.VarChar(160)
+  description                String?  @db.Text
+  isGlobal                   Boolean  @default(true)
+  status                     String   @default("ACTIVE") @db.VarChar(20)
+  classGrade                 String?  @db.VarChar(50)
+  subClass                   String?  @db.VarChar(80)
+  subjectId                  Int?
+  chapterId                  Int?
+  conceptId                  Int?
+  examNature                 String?  @db.VarChar(40)
+  timingText                 String?  @db.VarChar(120)
+  totalMarks                 Int?
+  durationMinutes            Int?
+  difficultyLevel            String?  @db.VarChar(20)
+  instructions               String?  @db.Text
+  defaultGenerationMode      String?  @db.VarChar(20)
+  defaultSetCount            Int?
+  defaultDifficultyCounts    Json?
+  defaultMarksByDifficulty   Json?
+  defaultQuestionBankIds     Json?
+  defaultReplaceExistingSets Boolean  @default(true)
+  createdById                Int
+  createdBy                  User     @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+
+  testPapers TestPaper[]
+  blueprintSections AssessmentBlueprintSection[]
+
+  @@index([createdById])
+  @@index([status])
+  @@index([isGlobal])
+  @@map("assessment_templates")
+}
+
+// 20. TestPaperSet Model
+model TestPaperSet {
+  id             Int       @id @default(autoincrement())
+  testPaperId    Int
+  testPaper      TestPaper @relation(fields: [testPaperId], references: [id], onDelete: Cascade)
+  label          String    @db.VarChar(20)
+  generationMode String    @default("RANDOM") @db.VarChar(20)
+  sourceBankIds  Json?
+  questionCount  Int       @default(0)
+  totalMarks     Int       @default(0)
+  easyCount      Int       @default(0)
+  mediumCount    Int       @default(0)
+  hardCount      Int       @default(0)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  questions TestPaperQuestion[]
+
+  @@unique([testPaperId, label])
+  @@map("test_paper_sets")
+}
+
+// 20. TestPaperQuestion Model
+model TestPaperQuestion {
+  id           Int           @id @default(autoincrement())
+  testPaperId  Int
+  testPaper    TestPaper     @relation(fields: [testPaperId], references: [id], onDelete: Cascade)
+  setId        Int?
+  set          TestPaperSet? @relation(fields: [setId], references: [id], onDelete: Cascade)
+  questionId   Int
+  question     Question      @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  marks        Int
+  displayOrder Int
+  sectionName         String?  @db.VarChar(120)
+  sectionOrder        Int?
+  sectionDisplayOrder Int?
+  sourceQuestionNo    String?  @db.VarChar(80)
+  isOptional          Boolean  @default(false)
+  choiceGroupKey      String?  @db.VarChar(120)
+  generationSnapshot  Json?
+
+  @@unique([testPaperId, questionId])
+  @@index([setId])
+  @@index([sectionName])
+  @@index([sectionOrder])
+  @@index([sourceQuestionNo])
+  @@map("test_paper_questions")
+}
+
+// 21. Assessment Blueprint Section Model
+model AssessmentBlueprintSection {
+  id                Int                 @id @default(autoincrement())
+  testPaperId       Int?
+  testPaper         TestPaper?          @relation(fields: [testPaperId], references: [id], onDelete: Cascade)
+  templateId        Int?
+  template          AssessmentTemplate? @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  sectionName       String              @db.VarChar(120)
+  sectionOrder      Int
+  startsAtQuestion  Int?
+  endsAtQuestion    Int?
+  requiredCount     Int                 @default(0)
+  optionalCount     Int                 @default(0)
+  marksPerQuestion  Int?
+  questionType      String?             @db.VarChar(120)
+  difficultyMix     Json?
+  objectiveMix      Json?
+  subpartRule       Json?
+  sourceBankIds     Json?
+  validationStatus  String              @default("DRAFT") @db.VarChar(20)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@unique([testPaperId, sectionOrder])
+  @@index([templateId, sectionOrder])
+  @@index([sectionName])
+  @@map("assessment_blueprint_sections")
+}
+
+// 22. Evaluator Model
+model Evaluator {
+  id          Int                 @id @default(autoincrement())
+  fullName    String              @db.VarChar(160)
+  mobile      String              @db.VarChar(30)
+  email       String?             @db.VarChar(160)
+  pan         String?             @db.VarChar(20)
+  aadhaar     String?             @db.VarChar(20)
+  designation String?             @db.VarChar(120)
+  rowNumber   Int?
+  status      String              @default("ACTIVE") @db.VarChar(30)
+  uploadedById Int
+  uploadedBy  User                @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  documents EvaluatorDocument[]
+
+  @@index([fullName])
+  @@index([mobile])
+  @@index([email])
+  @@index([pan])
+  @@index([aadhaar])
+  @@index([designation])
+  @@map("evaluators")
+}
+
+// 22. EvaluatorDocument Model
+model EvaluatorDocument {
+  id           Int       @id @default(autoincrement())
+  evaluatorId  Int
+  evaluator    Evaluator @relation(fields: [evaluatorId], references: [id], onDelete: Cascade)
+  fileName     String    @db.VarChar(255)
+  originalName String    @db.VarChar(255)
+  filePath     String    @db.VarChar(500)
+  fileSize     Int
+  mimeType     String    @db.VarChar(120)
+  documentType String?   @db.VarChar(80)
+  uploadedById Int
+  uploadedBy   User      @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
+  createdAt    DateTime  @default(now())
+
+  @@index([evaluatorId])
+  @@index([uploadedById])
+  @@map("evaluator_documents")
+}

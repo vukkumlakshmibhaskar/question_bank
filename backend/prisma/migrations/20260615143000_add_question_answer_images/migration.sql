@@ -1,0 +1,2 @@
+ALTER TABLE `questions` ADD COLUMN `imageUrl` VARCHAR(500) NULL;
+ALTER TABLE `answers` ADD COLUMN `imageUrl` VARCHAR(500) NULL;
