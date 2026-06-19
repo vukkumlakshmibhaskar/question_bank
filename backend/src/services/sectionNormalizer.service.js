@@ -298,6 +298,11 @@ const normalizeQuestion = (question, sections, index) => {
   const subpartCount = parseIntOrNull(question.subpartCount ?? row.Subparts ?? row["Subpart Count"]);
   const content = cleanText(question.content || question.question || "");
   const hasOrChoice = /\bOR\b/i.test(content);
+  const previousEvidence = question.sectionEvidence &&
+    typeof question.sectionEvidence === "object" &&
+    !Array.isArray(question.sectionEvidence)
+    ? question.sectionEvidence
+    : {};
 
   question.questionUid = buildQuestionUid(question, index);
   question.sourceQuestionNo = sourceNo || question.sourceQuestionNo || question.questionNo || null;
@@ -307,7 +312,8 @@ const normalizeQuestion = (question, sections, index) => {
   question.sectionOrder = section.sectionOrder;
   question.sectionConfidence = section.confidence;
   question.sectionEvidence = {
-    signals: [...new Set([...(question.sectionEvidence?.signals || []), ...section.evidence])],
+    ...previousEvidence,
+    signals: [...new Set([...(previousEvidence.signals || []), ...section.evidence])],
     normalizedAt: new Date().toISOString(),
   };
   question.subpartCount = subpartCount ?? question.subpartCount ?? null;

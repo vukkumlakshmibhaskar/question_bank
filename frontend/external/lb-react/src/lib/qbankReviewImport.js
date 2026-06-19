@@ -1,4 +1,4 @@
-import { qbankApiBase } from './qbankApi';
+import { qbankApiBase, qbankFetch } from './qbankApi';
 
 const text = (value) => String(value ?? '').trim();
 
@@ -13,9 +13,12 @@ const hashString = (value) => {
 
 const rowQuestionText = (row = {}) => (
   text(row['Question text(Mandatory)']) ||
+  text(row['Question Text']) ||
   text(row['Question Header']) ||
   text(row.Question) ||
-  text(row.question)
+  text(row.question_text) ||
+  text(row.question) ||
+  text(row['AI answer'])
 );
 
 export const hasExtractionReviewableRows = (rows = []) => (
@@ -36,3 +39,20 @@ export const buildExtractionReviewImportSignature = (jobId, rows = []) => {
 export const importExtractionRowsToQBankReview = (axiosInstance, payload) => (
   axiosInstance.post(`${qbankApiBase()}/reviews/extraction/import`, payload)
 );
+
+export const importExtractionRowsToQBankReviewFetch = async (payload) => {
+  const response = await qbankFetch(`${qbankApiBase()}/reviews/extraction/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const error = new Error(data.error || data.message || 'Failed to stage rows for Extraction Review.');
+    error.response = { status: response.status, data };
+    throw error;
+  }
+
+  return data;
+};

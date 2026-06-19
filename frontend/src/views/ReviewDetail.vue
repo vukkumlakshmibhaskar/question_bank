@@ -26,6 +26,7 @@ const approving = ref(false)
 const rejecting = ref(false)
 const normalizingSections = ref(false)
 const mediaUploading = ref(false)
+const verifyingQuestionKey = ref('')
 const errorMessage = ref('')
 const successMessage = ref('')
 
@@ -161,6 +162,76 @@ const getQuestionDisplayLabel = (question, fallbackIndex = 0) => {
   const no = getQuestionDisplayNo(question, fallbackIndex)
   const row = question?.extractionRowIndex || question?.sourceRowIndex
   return row ? `Q ${no} | Row ${row}` : `Q ${no}`
+}
+
+const extractionWorkflow = computed(() => (
+  cleanText(extractedData.value.extraction?.workflow || extractedData.value.parser?.workflow) || 'standard'
+))
+
+const imageLikePattern = /\.(png|jpe?g|gif|webp|bmp)(\?|#|$)/i
+
+const isImageLikeSource = (value) => {
+  const raw = cleanText(value)
+  if (!raw) return false
+  return (
+    /^(https?:|data:image\/|blob:|\/api\/extraction\/|\/uploads\/)/i.test(raw) ||
+    raw.startsWith('/workspace/') ||
+    raw.startsWith('workspace/') ||
+    raw.startsWith('/textbook-pages/') ||
+    raw.startsWith('/textbook-crops/') ||
+    raw.startsWith('textbook-pages/') ||
+    raw.startsWith('textbook-crops/') ||
+    imageLikePattern.test(raw)
+  )
+}
+
+const normalizeExtractionAssetPath = (value) => {
+  const raw = cleanText(value)
+  if (!raw) return ''
+  if (/^(https?:|data:|blob:|\/api\/|\/uploads\/)/i.test(raw)) return raw
+  if (raw.startsWith('/workspace/') || raw.startsWith('/textbook-pages/') || raw.startsWith('/textbook-crops/')) {
+    return `/api/extraction/${encodeURIComponent(extractionWorkflow.value)}${raw}`
+  }
+  if (raw.startsWith('workspace/') || raw.startsWith('textbook-pages/') || raw.startsWith('textbook-crops/')) {
+    return `/api/extraction/${encodeURIComponent(extractionWorkflow.value)}/${raw}`
+  }
+  return raw
+}
+
+const getQuestionSourceImage = (question = {}) => {
+  const row = question.extractionRow || question.rawRow || {}
+  const candidates = [
+    question.sourceImageUrl,
+    question.sourceImage,
+    row.Page_Image_URL,
+    row['Page_Image_URL'],
+    row.source_image_url,
+    row['Source Image URL'],
+    row['Source Image'],
+    row['Question Source Image'],
+    row['If Question is Image, Specify Image Name'],
+    row['Question Translate Image'],
+    row.questionImageUrl,
+    row.imageUrl,
+    question.imageUrl,
+    row.MS_Page_Image_URL,
+    row['MS_Page_Image_URL'],
+    question.sourceReference,
+  ]
+  const match = candidates.find(isImageLikeSource)
+  return normalizeExtractionAssetPath(match)
+}
+
+const hasQuestionSourceImage = (question = {}) => Boolean(getQuestionSourceImage(question))
+
+const getQuestionSourceLabel = (question = {}) => {
+  const row = question.extractionRow || question.rawRow || {}
+  const page = question.sourcePageNo || row.Page_Number || row['Page_Number'] || row.source_page || row['Page Number']
+  const sourceNo = question.sourceQuestionNo || question.questionNo || row.question_number || row['Question Number']
+  return [
+    page ? `Page ${page}` : '',
+    sourceNo ? `Q ${sourceNo}` : '',
+  ].filter(Boolean).join(' | ') || 'Source image'
 }
 
 const getIssueDisplayLabel = (issue) => {
@@ -316,12 +387,29 @@ const jumpToIssue = (issue) => {
   if (item) scrollToQuestion(item)
 }
 
-const markSectionVerified = (question) => {
+const isSourceMatchApproved = (item = {}) => {
+  const question = item.question || item
+  return (
+    question?.sourceMatchApproved === true ||
+    cleanText(question?.reviewerDecision).toUpperCase() === 'SOURCE_MATCH_APPROVED' ||
+    cleanText(question?.sectionEvidence?.reviewerDecision).toUpperCase() === 'SOURCE_MATCH_APPROVED' ||
+    cleanText(question?.sectionConfidence).toUpperCase() === 'VERIFIED'
+  )
+}
+
+const markSectionVerified = (question, meta = {}) => {
+  const reviewedAt = new Date().toISOString()
   question.sectionConfidence = 'VERIFIED'
+  question.sourceMatchApproved = true
+  question.sourceMatchApprovedAt = reviewedAt
+  question.reviewerDecision = 'SOURCE_MATCH_APPROVED'
+  if (meta.sourceImageUrl) question.sourceImageUrl = meta.sourceImageUrl
   question.sectionEvidence = {
     ...(question.sectionEvidence || {}),
     signals: [...new Set([...(question.sectionEvidence?.signals || []), 'reviewer-verified'])],
-    reviewedAt: new Date().toISOString(),
+    reviewedAt,
+    reviewerDecision: 'SOURCE_MATCH_APPROVED',
+    ...(meta.sourceImageUrl ? { sourceImageUrl: meta.sourceImageUrl } : {}),
   }
 }
 
@@ -474,8 +562,7 @@ const handleSetCorrectAnswer = (chIdx, coIdx, qIdx, aIdx) => {
   }
 }
 
-// API save/approval functions
-const handleSave = async () => {
+const saveReviewDraft = async (message = 'Draft corrections saved successfully.') => {
   saving.value = true
   errorMessage.value = ''
   successMessage.value = ''
@@ -483,13 +570,36 @@ const handleSave = async () => {
     const response = await api.put(`/reviews/${reviewId}`, {
       extractedData: extractedData.value
     })
-    successMessage.value = 'Draft corrections saved successfully.'
+    successMessage.value = message
     review.value = response.data.review
+    if (response.data.review?.extractedData) {
+      extractedData.value = JSON.parse(JSON.stringify(response.data.review.extractedData))
+    }
+    return true
   } catch (err) {
     errorMessage.value = err.response?.data?.error || 'Failed to save changes.'
+    return false
   } finally {
     saving.value = false
   }
+}
+
+// API save/approval functions
+const handleSave = async () => {
+  await saveReviewDraft()
+}
+
+const approveQuestionSourceMatch = async (item) => {
+  if (!item?.question) return
+  verifyingQuestionKey.value = item.key
+  const sourceImageUrl = getQuestionSourceImage(item.question)
+  markSectionVerified(item.question, { sourceImageUrl })
+  const questionLabel = getQuestionDisplayLabel(item.question, item.globalIndex - 1)
+  const saved = await saveReviewDraft(`${questionLabel} approved against source preview and saved.`)
+  if (saved) {
+    notificationStore.success(`${questionLabel} section confidence approved.`)
+  }
+  verifyingQuestionKey.value = ''
 }
 
 const handleNormalizeSections = async () => {
@@ -923,6 +1033,56 @@ const handleLogout = async () => {
                       </span>
                     </div>
 
+                    <div
+                      v-if="(item.warnings.length || item.hasLowConfidence) && hasQuestionSourceImage(item.question)"
+                      class="source-verification-panel"
+                    >
+                      <section class="source-preview-pane">
+                        <div class="source-pane-header">
+                          <div>
+                            <strong>PDF extracted image</strong>
+                            <span>{{ getQuestionSourceLabel(item.question) }}</span>
+                          </div>
+                          <a
+                            class="source-open-link"
+                            :href="getMediaUrl(getQuestionSourceImage(item.question))"
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Open
+                          </a>
+                        </div>
+                        <div class="source-image-frame">
+                          <img
+                            :src="getMediaUrl(getQuestionSourceImage(item.question))"
+                            alt="PDF extracted question image"
+                          />
+                        </div>
+                      </section>
+
+                      <section class="source-extracted-pane">
+                        <div class="source-pane-header">
+                          <div>
+                            <strong>Extracted question</strong>
+                            <span>Correct text here before approving.</span>
+                          </div>
+                          <span class="question-chip caution">{{ item.question.sectionConfidence || 'LOW' }}</span>
+                        </div>
+                        <textarea
+                          v-model="item.question.content"
+                          rows="8"
+                          placeholder="Question text..."
+                          :disabled="!canWrite || review.status !== 'PENDING'"
+                          @paste="handleReviewQuestionImagePaste($event, item.question)"
+                        ></textarea>
+                        <img
+                          v-if="item.question.imageUrl"
+                          :src="getMediaUrl(item.question.imageUrl)"
+                          alt="Attached extracted question image"
+                        />
+                      </section>
+                    </div>
+
                     <div class="section-card-edit-grid">
                       <label>
                         <span>Section</span>
@@ -964,7 +1124,10 @@ const handleLogout = async () => {
                       </label>
                     </div>
 
-                    <div class="question-preview-edit">
+                    <div
+                      v-if="!(item.warnings.length || item.hasLowConfidence) || !hasQuestionSourceImage(item.question)"
+                      class="question-preview-edit"
+                    >
                       <textarea
                         v-model="item.question.content"
                         rows="3"
@@ -1000,14 +1163,18 @@ const handleLogout = async () => {
                       </div>
                     </div>
 
-                    <div class="section-question-actions" v-if="canWrite && review.status === 'PENDING'">
+                    <div
+                      v-if="canWrite && review.status === 'PENDING' && !isSourceMatchApproved(item)"
+                      class="section-question-actions"
+                    >
                       <button
                         type="button"
-                        class="btn btn-secondary btn-sm"
+                        class="btn btn-primary btn-sm"
                         style="width: auto;"
-                        @click="markSectionVerified(item.question)"
+                        :disabled="saving || verifyingQuestionKey === item.key"
+                        @click="approveQuestionSourceMatch(item)"
                       >
-                        Mark Verified
+                        {{ verifyingQuestionKey === item.key ? 'Approving...' : 'Approve Source Match' }}
                       </button>
                     </div>
                   </article>
@@ -1768,6 +1935,120 @@ const handleLogout = async () => {
   font-size: 0.86rem;
 }
 
+.source-verification-panel {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.9fr) minmax(320px, 1.1fr);
+  gap: 0.9rem;
+}
+
+.source-preview-pane,
+.source-extracted-pane {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: 0.7rem;
+  min-width: 0;
+  padding: 0.8rem;
+}
+
+.source-preview-pane {
+  background: rgba(15, 23, 42, 0.28);
+}
+
+.source-extracted-pane {
+  background: rgba(99, 102, 241, 0.06);
+}
+
+.source-pane-header {
+  align-items: flex-start;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.source-pane-header > div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.source-pane-header strong {
+  color: var(--text-primary);
+  font-size: 0.92rem;
+}
+
+.source-pane-header span {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.source-open-link {
+  border: 1px solid rgba(99, 102, 241, 0.45);
+  border-radius: 999px;
+  color: var(--primary);
+  font-size: 0.75rem;
+  font-weight: 800;
+  padding: 0.25rem 0.6rem;
+  text-decoration: none;
+}
+
+.source-image-frame {
+  align-items: center;
+  background: #fff;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  display: flex;
+  justify-content: center;
+  min-height: 260px;
+  overflow: hidden;
+}
+
+.source-image-frame img {
+  display: block;
+  max-height: 420px;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.missing-source-image {
+  background: rgba(15, 23, 42, 0.04);
+  color: #334155;
+  display: grid;
+  gap: 0.35rem;
+  max-width: 340px;
+  padding: 1rem;
+  text-align: center;
+}
+
+.missing-source-image span {
+  color: #64748b;
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.source-extracted-pane textarea {
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font: inherit;
+  line-height: 1.5;
+  min-height: 260px;
+  outline: 0;
+  padding: 0.75rem;
+  resize: vertical;
+  width: 100%;
+}
+
+.source-extracted-pane img {
+  background: #fff;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  display: block;
+  max-height: 180px;
+  max-width: 100%;
+  object-fit: contain;
+}
+
 .section-card-edit-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(140px, 1fr));
@@ -2111,6 +2392,10 @@ const handleLogout = async () => {
   .section-rail {
     max-height: none;
     position: static;
+  }
+
+  .source-verification-panel {
+    grid-template-columns: 1fr;
   }
 
   .section-question-card-head,

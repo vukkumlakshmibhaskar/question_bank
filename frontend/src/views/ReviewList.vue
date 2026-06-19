@@ -79,6 +79,28 @@ const getFileIcon = (mimeType) => {
   return '📁'
 }
 
+const parserLabels = {
+  standard: 'Standard Parser',
+  language: 'Language Parser',
+  'question-crafter': 'Question Crafter',
+}
+
+const getParserName = (review) => {
+  const filePath = review.uploadFile?.filePath || ''
+  const workflow = filePath.startsWith('extraction://')
+    ? filePath.replace('extraction://', '').split(':')[0]
+    : ''
+  return parserLabels[workflow] || (workflow ? workflow : 'Document Upload')
+}
+
+const getParserClass = (review) => {
+  const name = getParserName(review).toLowerCase()
+  if (name.includes('language')) return 'parser-language'
+  if (name.includes('question crafter')) return 'parser-crafter'
+  if (name.includes('standard')) return 'parser-standard'
+  return 'parser-upload'
+}
+
 const openReview = (id) => {
   router.push(`/reviews/${id}`)
 }
@@ -218,6 +240,7 @@ const handleLogout = async () => {
               <tr style="border-bottom: 1px solid var(--border-color); background-color: rgba(255, 255, 255, 0.02);">
                 <th style="padding: 1rem 1.5rem; color: var(--text-secondary); font-weight: 600; font-size: 0.875rem; width: 60px;">ID</th>
                 <th style="padding: 1rem 1.5rem; color: var(--text-secondary); font-weight: 600; font-size: 0.875rem;">Source Document</th>
+                <th style="padding: 1rem 1.5rem; color: var(--text-secondary); font-weight: 600; font-size: 0.875rem;">Parser</th>
                 <th style="padding: 1rem 1.5rem; color: var(--text-secondary); font-weight: 600; font-size: 0.875rem;">Status</th>
                 <th style="padding: 1rem 1.5rem; color: var(--text-secondary); font-weight: 600; font-size: 0.875rem;">Uploaded On</th>
                 <th style="padding: 1rem 1.5rem; color: var(--text-secondary); font-weight: 600; font-size: 0.875rem;">Reviewed By</th>
@@ -226,7 +249,7 @@ const handleLogout = async () => {
             </thead>
             <tbody>
               <tr v-if="loading" style="border-bottom: 1px solid var(--border-color);">
-                <td colspan="6" style="padding: 2.5rem 0;">
+                <td colspan="7" style="padding: 2.5rem 0;">
                   <div class="spinner-container" style="padding: 1rem;">
                     <div class="spinner" style="width: 30px; height: 30px; border-width: 2.5px;"></div>
                     <div class="spinner-text" style="font-size: 0.85rem;">Fetching document extraction logs...</div>
@@ -234,7 +257,7 @@ const handleLogout = async () => {
                 </td>
               </tr>
               <tr v-else-if="filteredReviews.length === 0" style="border-bottom: 1px solid var(--border-color);">
-                <td colspan="6" style="padding: 4rem; text-align: center; color: var(--text-secondary);">
+                <td colspan="7" style="padding: 4rem; text-align: center; color: var(--text-secondary);">
                   <p style="font-size: 1.1rem; font-weight: 500; margin-bottom: 0.25rem;">No reviews found.</p>
                   <p style="font-size: 0.85rem; color: var(--text-muted);">Uploaded PDF materials will appear here once parsed by AI.</p>
                 </td>
@@ -249,6 +272,11 @@ const handleLogout = async () => {
                       <span style="font-size: 0.75rem; color: var(--text-secondary);">{{ (review.uploadFile?.fileSize / 1024).toFixed(1) }} KB</span>
                     </div>
                   </div>
+                </td>
+                <td data-label="Parser" style="padding: 1.25rem 1.5rem;">
+                  <span class="parser-badge" :class="getParserClass(review)">
+                    {{ getParserName(review) }}
+                  </span>
                 </td>
                 <td data-label="Status" style="padding: 1.25rem 1.5rem;">
                   <span class="badge" :class="getStatusClass(review.status)">
@@ -318,6 +346,41 @@ const handleLogout = async () => {
 .badge-rejected {
   background-color: rgba(239, 68, 68, 0.15);
   color: #fca5a5;
+}
+
+.parser-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.parser-standard {
+  border-color: rgba(59, 130, 246, 0.35);
+  background-color: rgba(59, 130, 246, 0.12);
+  color: #bfdbfe;
+}
+
+.parser-language {
+  border-color: rgba(16, 185, 129, 0.35);
+  background-color: rgba(16, 185, 129, 0.12);
+  color: #a7f3d0;
+}
+
+.parser-crafter {
+  border-color: rgba(168, 85, 247, 0.35);
+  background-color: rgba(168, 85, 247, 0.12);
+  color: #ddd6fe;
+}
+
+.parser-upload {
+  border-color: rgba(148, 163, 184, 0.35);
+  background-color: rgba(148, 163, 184, 0.12);
+  color: #cbd5e1;
 }
 
 @keyframes spin {

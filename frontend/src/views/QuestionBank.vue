@@ -893,7 +893,13 @@ const getMediaUrl = (path) => {
   const value = String(path)
   if (/^(https?:|data:|blob:)/i.test(value)) return value
   const apiRoot = (api.defaults.baseURL || '').replace(/\/api\/?$/, '')
-  return `${apiRoot}${value.startsWith('/') ? value : `/${value}`}`
+  const mediaUrl = `${apiRoot}${value.startsWith('/') ? value : `/${value}`}`
+  if (value.startsWith('/api/extraction/') && authStore.accessToken) {
+    const url = new URL(mediaUrl)
+    url.searchParams.set('access_token', authStore.accessToken)
+    return url.toString()
+  }
+  return mediaUrl
 }
 
 const uploadMediaFile = async (file) => {

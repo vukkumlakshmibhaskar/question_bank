@@ -4,8 +4,16 @@ const auditService = require("./audit.service");
 const subjectAccessService = require("./subjectAccess.service");
 const sectionNormalizerService = require("./sectionNormalizer.service");
 
-const EXTRACTION_REVIEW_PROMPT =
-  "Imported from Extraction DataParser. Rows were extracted by the Extraction workflow and staged for manual moderation in Extraction Reviews.";
+const PARSER_LABELS = {
+  standard: "Standard Parser",
+  language: "Language Parser",
+  "question-crafter": "Question Crafter",
+};
+
+const parserLabel = (workflow) => PARSER_LABELS[String(workflow || "").toLowerCase()] || "Extraction Parser";
+
+const buildExtractionReviewPrompt = (parserName) =>
+  `Imported from ${parserName}. Rows were extracted by the Extraction workflow and staged for manual moderation in Extraction Reviews.`;
 
 const text = (value) => String(value ?? "").trim();
 
@@ -25,6 +33,8 @@ const safeKeyPart = (value, fallback = "unknown") => (
     .replace(/^-+|-+$/g, "")
     .slice(0, 96) || fallback
 );
+
+const safeWorkflow = (value) => safeKeyPart(value || "standard", "standard").toLowerCase();
 
 const parseMarks = (value) => {
   const numeric = Number.parseInt(text(value), 10);
@@ -77,6 +87,7 @@ const mapQuestionType = (row, optionCount) => {
     row["Type of question (Mandatory)"],
     row["Question Type (Mandatory)"],
     row["Objective Type Questions"],
+    row.question_type,
   ].map(text).join(" ").toLowerCase();
 
   if (label.includes("true") && label.includes("false")) return "TRUE_FALSE";
@@ -90,6 +101,10 @@ const optionText = (row, optionNumber) => firstText(row, [
   `Option ${optionNumber}`,
   `Option${optionNumber}`,
   `option_${optionNumber}`,
+  `option${optionNumber}`,
+  `option_${String.fromCharCode(96 + optionNumber)}`,
+  `option${String.fromCharCode(96 + optionNumber)}`,
+  String.fromCharCode(64 + optionNumber),
 ]);
 
 const optionImage = (row, optionNumber) => firstText(row, [
@@ -104,6 +119,8 @@ const optionIsCorrect = (row, optionNumber) => yes(firstText(row, [
   `Option${optionNumber} Is Correct?`,
   `Option ${optionNumber} Is Correct?`,
   `option_${optionNumber}_is_correct`,
+  `option${optionNumber}_is_correct`,
+  `option_${String.fromCharCode(96 + optionNumber)}_is_correct`,
 ]));
 
 const buildExtractionImageUrl = (row, imageName, context = {}) => {
@@ -133,12 +150,23 @@ const buildAnswers = (row, context = {}) => {
       explanation: "",
     });
   }
+
+  const directAnswer = firstText(row, ["AI answer", "Answer", "answer", "Correct Answer", "correct_answer"]);
+  if (answers.length === 0 && directAnswer) {
+    answers.push({
+      content: directAnswer,
+      imageUrl: null,
+      isCorrect: true,
+      explanation: "",
+    });
+  }
+
   return answers;
 };
 
 const buildQuestionContent = (row) => {
   const header = firstText(row, ["Question Header", "Question Header / Passage"]);
-  const question = firstText(row, ["Question text(Mandatory)", "Question", "question"]);
+  const question = firstText(row, ["Question text(Mandatory)", "Question Text", "Question", "question_text", "question"]);
   if (header && question && !question.includes(header)) return `${header}\n\n${question}`;
   return question || header;
 };
@@ -168,6 +196,7 @@ const rowToQuestion = (row, context = {}) => {
     "Page No",
     "pageNo",
     "page_number",
+    "source_page",
   ]));
   return {
     content: buildQuestionContent(row),
@@ -183,7 +212,7 @@ const rowToQuestion = (row, context = {}) => {
       context
     ),
     type,
-    difficulty: mapDifficulty(row["Question Complexity"]),
+    difficulty: mapDifficulty(firstText(row, ["Question Complexity", "difficulty"])),
     explanation: "",
     answers,
     questionNo: sourceQuestionNo,
@@ -203,8 +232,8 @@ const rowToQuestion = (row, context = {}) => {
     choiceGroupKey: firstText(row, ["Choice Group", "Choice Group Key", "choiceGroupKey", "OR Group"]) || null,
     questionTypeLabel: firstText(row, ["Type of question (Mandatory)", "Question Type (Mandatory)"]) || null,
     objectiveType: firstText(row, ["Objective Type Questions"]) || null,
-    marks: parseMarks(firstText(row, ["Marks (Mandatory)", "Marks"])),
-    sourceReference: firstText(row, ["Page_Number", "Page Number", "Page_Image_URL"]) || null,
+    marks: parseMarks(firstText(row, ["Marks (Mandatory)", "Marks", "marks"])),
+    sourceReference: firstText(row, ["Page_Number", "Page Number", "Page_Image_URL", "source_page", "source_image_url"]) || null,
     extractionRow: row,
   };
 };
@@ -215,15 +244,16 @@ const groupRows = (rows, context = {}) => {
   for (const row of rows) {
     if (!rowHasQuestion(row)) continue;
 
-    const chapterName = firstText(row, ["Chapter", "Lesson/Module"]) || "Extraction";
+    const parserName = context.parserName || parserLabel(context.workflow);
+    const chapterName = firstText(row, ["Chapter", "Lesson/Module", "lesson_name", "lesson_no"]) || "Extraction";
     const conceptName =
-      firstText(row, ["Objective Type Questions", "Type of question (Mandatory)", "Question Type (Mandatory)"]) ||
+      firstText(row, ["Objective Type Questions", "Type of question (Mandatory)", "Question Type (Mandatory)", "question_type", "bloom_tag"]) ||
       "Extracted Questions";
 
     if (!chaptersByName.has(chapterName)) {
       chaptersByName.set(chapterName, {
         name: chapterName,
-        description: "Imported from Extraction DataParser.",
+        description: `Imported from ${parserName}.`,
         concepts: new Map(),
       });
     }
@@ -232,7 +262,7 @@ const groupRows = (rows, context = {}) => {
     if (!chapter.concepts.has(conceptName)) {
       chapter.concepts.set(conceptName, {
         name: conceptName,
-        description: "Imported from Extraction DataParser.",
+        description: `Imported from ${parserName}.`,
         questions: [],
       });
     }
@@ -252,6 +282,7 @@ const buildSubjectCandidates = (payload, rows) => {
     payload.subjectCode,
     rows[0]?.["Subject Name"],
     rows[0]?.["Subject Code"],
+    rows[0]?.subject_name,
   ].map(text).filter(Boolean);
 
   return [...new Set(candidates.map((candidate) => candidate.toLowerCase()))];
@@ -269,13 +300,15 @@ class ExtractionReviewImportService {
     const subject = await this.resolveSubject(payload, rows, user);
     await subjectAccessService.requireSubjectAccess(user, subject.id);
 
-    const workflow = safeKeyPart(payload.workflow || "standard", "standard");
+    const workflow = safeWorkflow(payload.workflow || payload.parser || payload.sourceParser || "standard");
+    const parserName = text(payload.parserName || payload.sourceParserName) || parserLabel(workflow);
+    const promptUsed = buildExtractionReviewPrompt(parserName);
     const jobId = safeKeyPart(payload.jobId || rows[0]?.jobId || "manual", "manual");
     const setName = safeKeyPart(payload.setName || "ALL", "ALL");
     const sourceFileName =
       text(payload.sourceFileName) ||
       firstText(rows[0], ["NIOS Filename", "Source File"]) ||
-      `Extraction ${workflow}`;
+      `${parserName} ${workflow}`;
     const externalKey = `${workflow}:${jobId}:${setName}`;
     const filePath = `extraction://${externalKey}`;
     const fileSize = Buffer.byteLength(JSON.stringify(rows), "utf8");
@@ -297,7 +330,7 @@ class ExtractionReviewImportService {
     if (!uploadFile) {
       uploadFile = await prisma.uploadFile.create({
         data: {
-          fileName: `Extraction Review - ${sourceFileName}`,
+          fileName: `Extraction Review - ${parserName} - ${sourceFileName}`,
           filePath,
           fileSize,
           mimeType: "application/json",
@@ -309,33 +342,39 @@ class ExtractionReviewImportService {
       uploadFile = await prisma.uploadFile.update({
         where: { id: uploadFile.id },
         data: {
-          fileName: `Extraction Review - ${sourceFileName}`,
+          fileName: `Extraction Review - ${parserName} - ${sourceFileName}`,
           fileSize,
           processingStatus: "COMPLETED",
         },
       });
     }
 
-    await this.ensureCompletedJob(uploadFile.id, user.id, rows.length);
+    await this.ensureCompletedJob(uploadFile.id, user.id, rows.length, parserName);
 
     const extractedData = sectionNormalizerService.normalizeExtractionData({
       subjectId: subject.id,
       source: "EXTRACTION",
       extraction: {
         workflow,
+        parserName,
         jobId,
         setName,
         sourceFileName,
         importedRowCount: rows.length,
         instructions: sectionInstructions || null,
       },
+      parser: {
+        workflow,
+        name: parserName,
+      },
       ...(sectionMap ? { sectionMap } : {}),
-      chapters: groupRows(rows, { workflow, jobId }),
+      chapters: groupRows(rows, { workflow, jobId, parserName }),
     }, { enabled: true }).extractedData;
 
     const geminiResponse = {
       source: "EXTRACTION",
       workflow,
+      parserName,
       jobId,
       setName,
       rows,
@@ -354,7 +393,7 @@ class ExtractionReviewImportService {
         where: { id: existingPending.id },
         data: {
           extractedData,
-          promptUsed: EXTRACTION_REVIEW_PROMPT,
+          promptUsed,
           geminiResponse,
         },
         include: {
@@ -364,7 +403,7 @@ class ExtractionReviewImportService {
           },
         },
       })
-      : await reviewRepository.create(uploadFile.id, extractedData, EXTRACTION_REVIEW_PROMPT, geminiResponse);
+      : await reviewRepository.create(uploadFile.id, extractedData, promptUsed, geminiResponse);
 
     await auditService.log({
       userId: user.id,
@@ -373,6 +412,7 @@ class ExtractionReviewImportService {
       entityId: review.id,
       newValue: {
         workflow,
+        parserName,
         jobId,
         setName,
         rowCount: rows.length,
@@ -431,7 +471,7 @@ class ExtractionReviewImportService {
     throw err;
   }
 
-  async ensureCompletedJob(uploadFileId, userId, questionCount) {
+  async ensureCompletedJob(uploadFileId, userId, questionCount, parserName = "Extraction Parser") {
     const existingJob = await prisma.processingJob.findFirst({
       where: { uploadFileId },
       orderBy: { startedAt: "desc" },
@@ -440,7 +480,7 @@ class ExtractionReviewImportService {
     const data = {
       status: "COMPLETED",
       completedAt: new Date(),
-      errorMessage: `Extraction DataParser staged ${questionCount} question(s) for extraction review.`,
+      errorMessage: `${parserName} staged ${questionCount} question(s) for extraction review.`,
     };
 
     if (existingJob) {

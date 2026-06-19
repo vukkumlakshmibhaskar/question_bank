@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from 'react';
+﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {AlertTriangle,BarChart3,BookOpen,Brain,
   Check,CheckCircle2,ChevronLeft,ChevronRight,Columns,Database,
   Download,Eye,FileText,Filter,List,ListChecks,Loader2,PenLine,Crop,
@@ -7,7 +7,9 @@ import {AlertTriangle,BarChart3,BookOpen,Brain,
 import ReactCrop from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import { qbankApiAssetUrl, qbankFetch, qbankWorkflowBase } from '../lib/qbankApi';
+import { buildExtractionReviewImportSignature, hasExtractionReviewableRows, importExtractionRowsToQBankReviewFetch } from '../lib/qbankReviewImport';
 
+const text = (value) => String(value ?? '').trim();
 const trimTrailingSlash = (value = '') => value.replace(/\/+$/, '');
 const DEFAULT_QUESTION_CRAFTER_API_BASE = qbankWorkflowBase('question-crafter');
 const API_BASE = trimTrailingSlash(
@@ -83,6 +85,44 @@ const QUESTION_TYPES = [
 
 const BLOOM_TAGS = ['knowledge', 'understanding', 'application', 'analysis', 'evaluation', 'creation'];
 const COLUMNS = ['question_number', 'question_type', 'question', 'AI answer', 'bloom_tag', 'difficulty', 'lesson_no', 'lesson_name', 'subject_name', 'source_page', 'source_image_url', 'source_excerpt'];
+const QUESTION_TYPE_LABELS = Object.fromEntries(QUESTION_TYPES.map((item) => [item.id, item.label]));
+const QUESTION_CRAFTER_PARSER_NAME = 'Question Crafter';
+const questionTypeLabel = (value) => QUESTION_TYPE_LABELS[text(value)] || text(value) || 'Generated Question';
+const qbankReviewImageUrl = (value) => {
+  const raw = text(value);
+  if (!raw) return '';
+  if (/^(https?:|data:|blob:|\/api\/|\/uploads\/)/i.test(raw)) return raw;
+  return raw.startsWith('/') ? `/api/extraction/question-crafter${raw}` : raw;
+};
+const toExtractionReviewRows = (rows = [], context = {}) => rows.map((row, index) => {
+  const lessonNoValue = text(row.lesson_no) || text(context.lessonNo);
+  const lessonNameValue = text(row.lesson_name) || text(context.lessonMeta?.lesson_name) || lessonNoValue || 'Question Crafter';
+  const subjectValue = text(row.subject_name) || text(context.subjectName);
+  const typeLabel = questionTypeLabel(row.question_type);
+  const questionImage = qbankReviewImageUrl(row.source_image_url);
+
+  return {
+    ...row,
+    workflow: 'question-crafter',
+    parserName: QUESTION_CRAFTER_PARSER_NAME,
+    'NIOS Filename': `Question Crafter - ${subjectValue || 'Textbook'}`,
+    'Subject Name': subjectValue,
+    Chapter: lessonNameValue,
+    'Lesson/Module': lessonNameValue,
+    'Objective Type Questions': typeLabel,
+    'Type of question (Mandatory)': typeLabel,
+    'Question Type (Mandatory)': typeLabel,
+    'Question text(Mandatory)': text(row.question),
+    'AI answer': text(row['AI answer']),
+    'Question Number': text(row.question_number) || String(index + 1),
+    'Page Number': text(row.source_page),
+    Page_Number: text(row.source_page),
+    Page_Image_URL: questionImage,
+    'If Question is Image, Specify Image Name': questionImage,
+    'Question Complexity': text(row.difficulty),
+    'Bloom Tag': text(row.bloom_tag),
+  };
+});
 const isVisualRow = (row = {}) => {
   const type = String(row.question_type || '').trim().toLowerCase();
   return type === 'diagram' || type === 'graph';
@@ -501,6 +541,7 @@ export default function QuestionCrafter() {
   const [replaceOpen, setReplaceOpen] = useState(false);
   const [findText, setFindText] = useState('');
   const [replaceText, setReplaceText] = useState('');
+  const reviewImportKeysRef = useRef(new Set());
 
   const effectiveCount = useMemo(() => Math.min(100, Math.max(1, Number.parseInt(count, 10) || 1)), [count]);
 
@@ -647,6 +688,44 @@ export default function QuestionCrafter() {
     setSelectedLessonNos(checked ? detectedLessons.map((lesson) => lesson.lesson_no) : []);
   };
 
+  const stageLessonRowsForExtractionReview = async (lessonNoValue, rows, lessonMeta = {}) => {
+    if (!textbookSessionId || !lessonNoValue) return;
+
+    const reviewRows = toExtractionReviewRows(rows, {
+      lessonNo: lessonNoValue,
+      lessonMeta,
+      subjectName,
+    });
+    if (!hasExtractionReviewableRows(reviewRows)) return;
+
+    const signature = buildExtractionReviewImportSignature(
+      `question-crafter:${textbookSessionId}:${lessonNoValue}`,
+      reviewRows,
+    );
+    if (reviewImportKeysRef.current.has(signature)) return;
+    reviewImportKeysRef.current.add(signature);
+
+    try {
+      const data = await importExtractionRowsToQBankReviewFetch({
+        workflow: 'question-crafter',
+        parserName: QUESTION_CRAFTER_PARSER_NAME,
+        jobId: textbookSessionId,
+        setName: lessonNoValue,
+        sourceFileName: `Question Crafter - ${lessonNoValue}`,
+        subjectName,
+        rows: reviewRows,
+      });
+      if (data?.review?.id) {
+        console.info(`Extraction Review updated from Question Crafter: #${data.review.id}`);
+      }
+    } catch (error) {
+      reviewImportKeysRef.current.delete(signature);
+      if (![401, 403].includes(error?.response?.status)) {
+        console.warn('Failed to stage Question Crafter rows for Extraction Review.', error);
+      }
+    }
+  };
+
   const analyzeTextbook = async () => {
     setAnalyzing(true);
     setWorkbook({});
@@ -715,6 +794,7 @@ export default function QuestionCrafter() {
       setGeneratedConfigs((current) => ({ ...current, [lesson.lesson_no]: JSON.stringify(lessonConfig) }));
       setActiveLesson(lesson.lesson_no);
       setWizardStep('review');
+      void stageLessonRowsForExtractionReview(lesson.lesson_no, rows, lesson);
       return true;
     } catch (err) {
       setError(err.message);
@@ -778,13 +858,15 @@ export default function QuestionCrafter() {
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || 'Answer generation failed');
       const answerMap = new Map((data.answers || []).map((item) => [Number(item.row_index), item['AI answer'] || '']));
+      const nextRows = rows.map((row, rowIndex) => {
+        const answer = answerMap.get(rowIndex);
+        return answer ? { ...row, 'AI answer': answer } : row;
+      });
       setWorkbook((current) => ({
         ...current,
-        [activeLesson]: (current[activeLesson] || []).map((row, rowIndex) => {
-          const answer = answerMap.get(rowIndex);
-          return answer ? { ...row, 'AI answer': answer } : row;
-        }),
+        [activeLesson]: nextRows,
       }));
+      void stageLessonRowsForExtractionReview(activeLesson, nextRows, activeLessonMeta);
       return true;
     } catch (err) {
       setError(err.message);
@@ -816,6 +898,7 @@ export default function QuestionCrafter() {
       if (warnings.length && !window.confirm(`${warnings.join('\n')}\n\nDownload anyway?`)) {
         return;
       }
+      await stageLessonRowsForExtractionReview(activeLesson, workbook[activeLesson] || [], activeLessonMeta);
       const workbookToExport = { [activeLesson]: workbook[activeLesson] || [] };
       const cleaned = Object.fromEntries(Object.entries(workbookToExport).map(([sheet, rows]) => [
         sheet,
@@ -860,6 +943,7 @@ export default function QuestionCrafter() {
         question: String(row.question || '').split(findText).join(replaceText),
         'AI answer': String(row['AI answer'] || '').split(findText).join(replaceText),
       }));
+      void stageLessonRowsForExtractionReview(activeLesson, nextRows, activeLessonMeta);
       return { ...current, [activeLesson]: nextRows };
     });
     setReplaceOpen(false);
@@ -869,7 +953,12 @@ export default function QuestionCrafter() {
 
   const openReview = (realIndex) => setReviewIndex(realIndex);
   const saveReview = (index, row) => {
-    updateRow(activeLesson, index, row);
+    const nextRows = activeRows.map((currentRow, rowIndex) => rowIndex === index ? { ...currentRow, ...row } : currentRow);
+    setWorkbook((current) => ({
+      ...current,
+      [activeLesson]: nextRows,
+    }));
+    void stageLessonRowsForExtractionReview(activeLesson, nextRows, activeLessonMeta);
     if (index < activeRows.length - 1) setReviewIndex(index + 1);
     else setReviewIndex(null);
   };
@@ -900,7 +989,13 @@ export default function QuestionCrafter() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Regeneration failed');
-      updateRow(activeLesson, index, { ...polishRowText(data.row), question_number: row.question_number, review_status: data.row?.review_status || 'Pending' });
+      const regeneratedRow = { ...polishRowText(data.row), question_number: row.question_number, review_status: data.row?.review_status || 'Pending' };
+      const nextRows = activeRows.map((currentRow, rowIndex) => rowIndex === index ? { ...currentRow, ...regeneratedRow } : currentRow);
+      setWorkbook((current) => ({
+        ...current,
+        [activeLesson]: nextRows,
+      }));
+      void stageLessonRowsForExtractionReview(activeLesson, nextRows, activeLessonMeta);
     } catch (err) {
       setError(err.message);
     }
