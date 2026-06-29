@@ -31,6 +31,12 @@ const subjectsLoading = ref(false)
 const subjectsError = ref('')
 const savingTemplate = ref(false)
 const downloadingSetId = ref(null)
+const translatingSetId = ref(null)
+const translationLanguages = ref([])
+const loadingTranslationLanguages = ref(false)
+const translationLanguageBySet = ref({})
+const translationJobsBySet = ref({})
+const translationPollTimers = ref({})
 const pagination = ref(createPagination(10))
 
 const filterSearch = ref('')
@@ -868,6 +874,8 @@ const openGenerateSets = async (paper) => {
     if (questionBanks.value.length === 0) {
       await fetchQuestionBanks()
     }
+    await fetchTranslationLanguages()
+    prepareTranslationLanguageDefaults(selectedPaperForSets.value.sets || [])
   } catch (err) {
     isSetModalOpen.value = false
     notificationStore.error(err.response?.data?.error || 'Failed to open set generator.')
@@ -877,6 +885,7 @@ const openGenerateSets = async (paper) => {
 const closeSetModal = () => {
   if (generating.value) return
   if (isSetPreviewOpen.value) closeSetPreview()
+  clearTranslationPolls()
   isSetModalOpen.value = false
   selectedPaperForSets.value = null
   resetSetGenerationForm()
@@ -906,6 +915,7 @@ const handleGenerateSets = async () => {
 
     selectedPaperForSets.value = response.data.testPaper
     setDocumentHtml.value = {}
+    prepareTranslationLanguageDefaults(selectedPaperForSets.value.sets || [])
     notificationStore.success('Questions generated successfully.')
     await fetchTestPapers()
   } catch (err) {
@@ -986,21 +996,6 @@ const previewTimingText = (paper) => {
 
 const examDateForPaper = (paper) => {
   return paper?.examDate ? formatDateOnly(paper.examDate) : '______________________'
-}
-
-const buildInstructionHtml = (paper) => {
-  if (paper?.instructions) {
-    return paragraphsFromText(paper.instructions)
-  }
-
-  return `
-    <ol>
-      <li>Candidate must write his/her Roll Number on the first page of the Question Paper.</li>
-      <li>Please check the Question Paper to verify that the total pages and total number of questions are correct.</li>
-      <li>All questions are compulsory unless mentioned otherwise.</li>
-      <li>Marks for each question are shown against the question.</li>
-    </ol>
-  `
 }
 
 const buildQuestionHtml = (link, index) => {
@@ -1109,45 +1104,174 @@ const buildSectionedQuestionsHtml = (questions = []) => {
     .join('')
 }
 
+const questionTypeForLink = (link) => {
+  const question = link.question || {}
+  return (
+    question.questionTypeLabel ||
+    question.type ||
+    link.generationSnapshot?.questionType ||
+    'Questions'
+  )
+}
+
+const sectionSummaryForSet = (questions = []) => {
+  return groupQuestionsBySection(questions).map((group) => {
+    const displayNumbers = group.questions
+      .map((link, index) => parseInt(link.displayOrder) || parseInt(link.resolvedDisplayOrder) || index + 1)
+      .filter((number) => Number.isInteger(number) && number > 0)
+    const start = displayNumbers.length ? Math.min(...displayNumbers) : 1
+    const end = displayNumbers.length ? Math.max(...displayNumbers) : start
+    const marksSet = new Set(group.questions.map((link) => parseInt(link.marks) || 0).filter(Boolean))
+    const typeSet = new Set(group.questions.map((link) => questionTypeForLink(link)).filter(Boolean))
+    const optionalCount = group.questions.filter((link) => link.isOptional).length
+    const requiredCount = Math.max(group.questions.length - optionalCount, 0)
+
+    return {
+      sectionName: group.sectionName,
+      start,
+      end,
+      count: group.questions.length,
+      requiredCount,
+      optionalCount,
+      marksText: marksSet.size === 1 ? `${Array.from(marksSet)[0]} mark${Array.from(marksSet)[0] === 1 ? '' : 's'}` : 'mixed marks',
+      typeText: typeSet.size === 1 ? Array.from(typeSet)[0] : 'mixed question types',
+    }
+  })
+}
+
+const buildSectionInstructionHtml = (questions = []) => {
+  const summaries = sectionSummaryForSet(questions)
+
+  if (summaries.length === 0) {
+    return '<li>Section details will appear after questions are generated.</li>'
+  }
+
+  return summaries
+    .map((section) => {
+      const rangeText = section.start === section.end
+        ? `Q. No. ${section.start}`
+        : `Q. No. ${section.start} to ${section.end}`
+      const optionalText = section.optionalCount > 0
+        ? `${section.requiredCount} compulsory and ${section.optionalCount} optional question${section.optionalCount === 1 ? '' : 's'}`
+        : `${section.count} question${section.count === 1 ? '' : 's'}`
+
+      return `
+        <li class="paper-section-note">
+          <strong>${escapeHtml(section.sectionName)} consists of</strong>
+          <div class="paper-section-note-lines">
+            <p>
+              <strong>(a) ${escapeHtml(rangeText)}</strong> - ${escapeHtml(section.typeText)}
+              carrying <strong>${escapeHtml(section.marksText)}</strong> each.
+              ${escapeHtml(optionalText)}
+            </p>
+          </div>
+        </li>
+      `
+    })
+    .join('')
+}
+
+const buildCoverInstructionHtml = (paper, setItem) => {
+  const codeNo = previewCodeNo(paper, setItem)
+  const setLabel = setItem?.label || 'A'
+
+  return `
+    <ol class="paper-general-list">
+      <li>Candidate must write his/her Roll Number on the first page of the Question Paper.</li>
+      <li>Please check the Question Paper to verify that the total pages and total number of questions contained in the Question Paper are the same as those printed on the top of the first page. Also check to see that the questions are in sequential order.</li>
+      <li>Making any identification mark in the Answer-Book or writing Roll Number anywhere other than the specified places will lead to disqualification of the candidate.</li>
+      <li>Write your Question Paper <strong>Code No.${escapeHtml(codeNo)}</strong>, <strong>Set ${escapeHtml(setLabel)}</strong> on the Answer-Book.</li>
+      <li>
+        (a) The Question Paper is in English/Hindi medium only. However, if you wish, you can answer in any one of the languages listed below:
+        <br />
+        English, Hindi, Urdu, Punjabi, Bengali, Tamil, Malayalam, Kannada, Telugu, Marathi, Oriya, Gujarati, Konkani, Manipuri, Assamese, Nepali, Kashmiri, Sanskrit and Sindhi.
+        You are required to indicate the language you have chosen to answer in the box provided in the Answer-Book.
+        <br />
+        (b) If you choose to write the answer in the language other than Hindi and English, the responsibility for any errors/mistakes in understanding the question will be yours only.
+      </li>
+      <li>In case of any doubt or confusion in the question paper, the English version will prevail.</li>
+    </ol>
+  `
+}
+
+const buildCoverPageHtml = (paper, setItem, questions, subjectName) => {
+  const questionCount = questions.length || setItem.questionCount || 0
+  const setLabel = setItem.label || 'A'
+
+  return `
+    <section class="paper-front-page">
+      <p class="paper-document-count">
+        This question paper consists of <strong>${questionCount} questions</strong> and
+        <strong>____ printed pages</strong>.
+      </p>
+
+      <div class="paper-cover-topline">
+        <strong>Roll No. __________________</strong>
+        <strong>Code No. ${escapeHtml(previewCodeNo(paper, setItem))} SET - [ ${escapeHtml(setLabel)} ]</strong>
+      </div>
+
+      <h2 class="paper-cover-title">${escapeHtml(subjectName).toUpperCase()}</h2>
+
+      <div class="paper-cover-lines">
+        <p><strong>Day and Date of Examination</strong> ______________________________</p>
+        <p><strong>Signature of Invigilators 1.</strong> ________________ <strong>2.</strong> ________________</p>
+      </div>
+
+      <h4>General Instructions:</h4>
+      <div class="paper-instructions paper-cover-instructions">
+        ${buildCoverInstructionHtml(paper, setItem)}
+      </div>
+    </section>
+  `
+}
+
+const buildNotePageHtml = (paper, setItem, questions, subjectName) => {
+  const questionCount = questions.length || setItem.questionCount || 0
+
+  return `
+    <section class="paper-note-page">
+      <h2>${escapeHtml(subjectName).toUpperCase()}</h2>
+      <div class="paper-note-header">
+        <span><strong>Time :</strong> ${escapeHtml(previewTimingText(paper))}</span>
+        <span><strong>Maximum Marks :</strong> ${escapeHtml(paper.totalMarks || setItem.totalMarks || '-')}</span>
+      </div>
+
+      <div class="paper-note-block">
+        <strong>Note :</strong>
+        <ol class="paper-note-list paper-roman-list" type="i">
+          <li>This question paper consists of ${questionCount} questions in all.</li>
+          <li>All questions are <strong>compulsory</strong> unless optional questions are mentioned in the section instructions.</li>
+          <li>Marks are given against each question.</li>
+          <li>Use log tables if necessary.</li>
+          ${buildSectionInstructionHtml(questions)}
+        </ol>
+      </div>
+
+      <div class="paper-note-block">
+        <strong>NOTE</strong>
+        <ol class="paper-note-list paper-decimal-note-list">
+          <li>Answers of all questions are to be given in the Answer-Book given to you.</li>
+          <li>Fifteen minutes time has been allotted to read this question paper before writing starts.</li>
+        </ol>
+      </div>
+    </section>
+  `
+}
+
 const buildDefaultSetDocument = (setItem) => {
   const paper = selectedPaperForSets.value || {}
   const questions = setItem.questions || []
   const subjectName = previewSubjectName(paper, setItem)
-  const paperTitleText = paper.title || 'Question Paper'
-  const subClassHtml = paper.subClass
-    ? `<p><strong>Sub-class:</strong> ${escapeHtml(paper.subClass)}</p>`
-    : ''
 
   return `
     <section class="question-paper-document">
-      <p>This question paper consists of <strong>${questions.length || setItem.questionCount || 0} questions</strong> and <strong>____ printed pages</strong>.</p>
-
-      <div class="paper-topline">
-        <strong>Roll No. ________________</strong>
-        <strong>Code No. ${previewCodeNo(paper, setItem)} SET - [ ${escapeHtml(setItem.label)} ]</strong>
-      </div>
-
-      <h2>${escapeHtml(subjectName).toUpperCase()}</h2>
-      <h3>${escapeHtml(paperTitleText)}</h3>
-
-      <div class="paper-meta-grid">
-        <p><strong>Class:</strong> ${escapeHtml(paper.classGrade || '-')}</p>
-        ${subClassHtml}
-        <p><strong>Exam Nature:</strong> ${escapeHtml(examNatureLabel(paper.examNature))}</p>
-        <p><strong>Exam Date:</strong> ${escapeHtml(examDateForPaper(paper))}</p>
-        <p><strong>Timing:</strong> ${escapeHtml(previewTimingText(paper))}</p>
-        <p><strong>Maximum Marks:</strong> ${escapeHtml(paper.totalMarks || setItem.totalMarks || '-')}</p>
-      </div>
-
-      <p><strong>Day and Date of Examination ${escapeHtml(examDateForPaper(paper))}</strong></p>
-      <p><strong>Signature of Invigilators 1. ________________ 2. ________________</strong></p>
-
-      <h4>General Instructions:</h4>
-      <div class="paper-instructions">
-        ${buildInstructionHtml(paper)}
-      </div>
-
-      ${buildSectionedQuestionsHtml(questions)}
+      ${buildCoverPageHtml(paper, setItem, questions, subjectName)}
+      <div class="paper-page-break" aria-hidden="true"></div>
+      ${buildNotePageHtml(paper, setItem, questions, subjectName)}
+      <div class="paper-page-break" aria-hidden="true"></div>
+      <section class="paper-question-pages">
+        ${buildSectionedQuestionsHtml(questions)}
+      </section>
     </section>
   `
 }
@@ -1236,11 +1360,15 @@ const buildPdfExportHtml = (setItem, bodyHtml) => {
         background: #ffffff;
         color: #0f172a;
         font-family: Calibri, Arial, sans-serif;
-        font-size: 12pt;
-        line-height: 1.45;
+        font-size: 10.5pt;
+        line-height: 1.5;
         min-height: 10.69in;
         padding: 0;
         width: 7.57in;
+      }
+      .pdf-export-page .question-paper-document {
+        margin: 0 auto;
+        width: 4.72in;
       }
       .pdf-export-page h1,
       .pdf-export-page h2,
@@ -1251,6 +1379,116 @@ const buildPdfExportHtml = (setItem, bodyHtml) => {
       .pdf-export-page h2,
       .pdf-export-page h3 {
         text-align: center;
+      }
+      .pdf-export-page .paper-front-page,
+      .pdf-export-page .paper-note-page {
+        min-height: 10.12in;
+      }
+      .pdf-export-page .paper-front-page {
+        padding-top: 0.1in;
+      }
+      .pdf-export-page .paper-note-page {
+        padding-top: 0.72in;
+      }
+      .pdf-export-page .paper-document-count {
+        margin: 0 0 27pt;
+      }
+      .pdf-export-page .paper-cover-topline {
+        align-items: center;
+        display: flex;
+        gap: 20pt;
+        justify-content: space-between;
+        margin: 0 0 41pt;
+      }
+      .pdf-export-page .paper-cover-title {
+        font-size: 10.5pt;
+        margin: 0 0 48pt;
+        text-align: center;
+      }
+      .pdf-export-page .paper-cover-lines {
+        margin: 0 0 24pt;
+      }
+      .pdf-export-page .paper-cover-lines p {
+        margin: 0 0 22pt;
+      }
+      .pdf-export-page .paper-cover-instructions ol,
+      .pdf-export-page .paper-note-list {
+        margin: 0;
+        padding-left: 0;
+      }
+      .pdf-export-page .paper-general-list {
+        counter-reset: general-instruction;
+        list-style: none;
+      }
+      .pdf-export-page .paper-general-list li {
+        counter-increment: general-instruction;
+        margin-bottom: 16pt;
+        padding-left: 18pt;
+        position: relative;
+        text-align: justify;
+      }
+      .pdf-export-page .paper-general-list li::before {
+        content: counter(general-instruction) ".";
+        font-weight: 700;
+        left: 0;
+        position: absolute;
+        top: 0;
+      }
+      .pdf-export-page .paper-note-header {
+        align-items: center;
+        display: flex;
+        justify-content: space-between;
+        margin: 0 0 23pt;
+      }
+      .pdf-export-page .paper-note-block {
+        margin-top: 20pt;
+      }
+      .pdf-export-page .paper-note-list {
+        margin: 6pt 0 0;
+      }
+      .pdf-export-page .paper-roman-list,
+      .pdf-export-page .paper-decimal-note-list {
+        list-style: none;
+      }
+      .pdf-export-page .paper-roman-list {
+        counter-reset: note-roman;
+      }
+      .pdf-export-page .paper-decimal-note-list {
+        counter-reset: note-decimal;
+      }
+      .pdf-export-page .paper-roman-list > li,
+      .pdf-export-page .paper-decimal-note-list > li {
+        margin-bottom: 6pt;
+        padding-left: 20pt;
+        position: relative;
+      }
+      .pdf-export-page .paper-roman-list > li::before {
+        content: "(" counter(note-roman, lower-roman) ") ";
+        counter-increment: note-roman;
+        left: 0;
+        position: absolute;
+      }
+      .pdf-export-page .paper-decimal-note-list > li::before {
+        content: "(" counter(note-decimal) ") ";
+        counter-increment: note-decimal;
+        left: 0;
+        position: absolute;
+      }
+      .pdf-export-page .paper-section-note {
+        margin-top: 12pt;
+      }
+      .pdf-export-page .paper-section-note-lines {
+        margin: 18pt 0 20pt 10pt;
+      }
+      .pdf-export-page .paper-section-note-lines p {
+        margin: 0 0 17pt;
+        text-align: justify;
+      }
+      .pdf-export-page .paper-page-break {
+        break-after: page;
+        height: 0;
+        overflow: hidden;
+        page-break-after: always;
       }
       .pdf-export-page .paper-topline,
       .pdf-export-page .paper-meta-grid {
@@ -1368,6 +1606,7 @@ const downloadSetDocument = async (setItem) => {
         pagebreak: {
           mode: ['css', 'legacy'],
           before: '.editor-page-break',
+          after: '.paper-page-break',
         },
       })
       .from(exportNode.querySelector('.pdf-export-page'))
@@ -1383,6 +1622,204 @@ const downloadSetDocument = async (setItem) => {
     }
     downloadingSetId.value = null
   }
+}
+
+const fetchTranslationLanguages = async () => {
+  if (loadingTranslationLanguages.value || translationLanguages.value.length > 0) return
+
+  loadingTranslationLanguages.value = true
+  try {
+    const response = await api.get('/test-papers/translation/languages')
+    translationLanguages.value = Array.isArray(response.data?.languages) ? response.data.languages : []
+  } catch (err) {
+    translationLanguages.value = []
+    notificationStore.warning('Translation API languages could not be loaded.')
+  } finally {
+    loadingTranslationLanguages.value = false
+  }
+}
+
+const defaultTranslationLanguage = () => translationLanguages.value[0] || 'Hindi'
+
+const prepareTranslationLanguageDefaults = (sets = []) => {
+  const fallback = defaultTranslationLanguage()
+  if (!fallback) return
+
+  const next = { ...translationLanguageBySet.value }
+  sets.forEach((setItem) => {
+    if (setItem?.id && !next[setItem.id]) {
+      next[setItem.id] = fallback
+    }
+  })
+  translationLanguageBySet.value = next
+}
+
+const ensureTranslationLanguage = (setItem) => {
+  const current = String(translationLanguageBySet.value[setItem.id] || '').trim()
+  if (current) return current
+
+  const fallback = defaultTranslationLanguage()
+  translationLanguageBySet.value = {
+    ...translationLanguageBySet.value,
+    [setItem.id]: fallback,
+  }
+  return fallback
+}
+
+const translationJobForSet = (setItem) => translationJobsBySet.value[setItem.id] || null
+
+const mergeTranslationJob = (setId, payload) => {
+  const previous = translationJobsBySet.value[setId] || {}
+  translationJobsBySet.value = {
+    ...translationJobsBySet.value,
+    [setId]: {
+      ...previous,
+      ...payload,
+      viewerUrls: {
+        ...(previous.viewerUrls || {}),
+        ...(payload.viewerUrls || {}),
+      },
+      pdf_urls: {
+        ...(previous.pdf_urls || {}),
+        ...(payload.pdf_urls || {}),
+      },
+    },
+  }
+}
+
+const normalizedTranslationStatus = (job) => String(job?.status || '').toLowerCase()
+
+const isTranslationRunning = (job) => ['queued', 'processing'].includes(normalizedTranslationStatus(job))
+
+const isTranslationCompleted = (job) => normalizedTranslationStatus(job) === 'completed'
+
+const translationStatusText = (job) => {
+  if (!job) return ''
+  const status = normalizedTranslationStatus(job)
+  const progress = job.progress ? ` · ${job.progress}` : ''
+  if (status === 'completed') return `Completed${progress}`
+  if (status === 'failed') return 'Failed'
+  if (status === 'processing') return `Processing${progress}`
+  if (status === 'queued') return `Queued${progress}`
+  return status ? `${status}${progress}` : ''
+}
+
+const translationStatusClass = (job) => ({
+  'translation-status': true,
+  'translation-status-running': isTranslationRunning(job),
+  'translation-status-completed': isTranslationCompleted(job),
+  'translation-status-failed': normalizedTranslationStatus(job) === 'failed',
+})
+
+const translationButtonLabel = (setItem) => {
+  const job = translationJobForSet(setItem)
+  if (translatingSetId.value === setItem.id) return 'Submitting...'
+  if (isTranslationRunning(job)) return 'Translating...'
+  return 'Translate PDF'
+}
+
+const clearTranslationPolls = () => {
+  Object.values(translationPollTimers.value).forEach((timerId) => {
+    if (timerId) window.clearTimeout(timerId)
+  })
+  translationPollTimers.value = {}
+}
+
+const clearTranslationPoll = (setId) => {
+  const timerId = translationPollTimers.value[setId]
+  if (timerId) window.clearTimeout(timerId)
+  const { [setId]: _removed, ...remaining } = translationPollTimers.value
+  translationPollTimers.value = remaining
+}
+
+const pollTranslationJob = (setItem, jobId) => {
+  if (!selectedPaperForSets.value || !jobId) return
+
+  clearTranslationPoll(setItem.id)
+
+  const poll = async () => {
+    try {
+      const response = await api.get(
+        `/test-papers/${selectedPaperForSets.value.id}/translation-jobs/${jobId}/status`,
+      )
+      mergeTranslationJob(setItem.id, response.data)
+
+      if (isTranslationRunning(response.data)) {
+        translationPollTimers.value = {
+          ...translationPollTimers.value,
+          [setItem.id]: window.setTimeout(poll, 3000),
+        }
+      } else {
+        clearTranslationPoll(setItem.id)
+        if (isTranslationCompleted(response.data)) {
+          notificationStore.success(`Set ${setItem.label} translation completed.`)
+        }
+      }
+    } catch (err) {
+      clearTranslationPoll(setItem.id)
+      mergeTranslationJob(setItem.id, {
+        status: 'failed',
+        error: err.response?.data?.error || 'Translation status check failed.',
+      })
+      notificationStore.error(err.response?.data?.error || 'Translation status check failed.')
+    }
+  }
+
+  translationPollTimers.value = {
+    ...translationPollTimers.value,
+    [setItem.id]: window.setTimeout(poll, 2500),
+  }
+}
+
+const translateSetDocument = async (setItem) => {
+  if (!selectedPaperForSets.value || translatingSetId.value) return
+
+  await fetchTranslationLanguages()
+  const language = ensureTranslationLanguage(setItem)
+  if (!language) {
+    notificationStore.warning('Select a target language before translation.')
+    return
+  }
+
+  translatingSetId.value = setItem.id
+  try {
+    const response = await api.post(
+      `/test-papers/${selectedPaperForSets.value.id}/sets/${setItem.id}/translate`,
+      { targetLanguages: [language] },
+    )
+
+    mergeTranslationJob(setItem.id, {
+      ...response.data,
+      status: response.data?.status || 'queued',
+      selectedLanguage: language,
+      languages: response.data?.languages || [language],
+    })
+
+    notificationStore.success(`Set ${setItem.label} translation started.`)
+    pollTranslationJob(setItem, response.data?.job_id)
+  } catch (err) {
+    notificationStore.error(err.response?.data?.error || 'Failed to start translation.')
+  } finally {
+    translatingSetId.value = null
+  }
+}
+
+const translatedPdfUrl = (setItem) => {
+  const job = translationJobForSet(setItem)
+  if (!job) return ''
+
+  const language = translationLanguageBySet.value[setItem.id] || job.selectedLanguage
+  return job.viewerUrls?.[language] || job.pdf_urls?.[language] || ''
+}
+
+const openTranslatedPdf = (setItem) => {
+  const url = translatedPdfUrl(setItem)
+  if (!url) {
+    notificationStore.warning('Translated PDF is not ready yet.')
+    return
+  }
+
+  window.open(url, '_blank', 'noopener,noreferrer')
 }
 
 const formatMinutes = (minutes) => {
@@ -2902,6 +3339,48 @@ watch(selectedQuestionBankIds, loadSelectedBankDetails, { deep: true })
                       <span class="status-pill status-draft">{{ setItem.generationMode }}</span>
                       <span>{{ setDifficultyText(setItem) }}</span>
                     </div>
+                    <div class="set-translation-box">
+                      <div class="set-translation-copy">
+                        <strong>Translate final PDF</strong>
+                        <span>Runs after preview/edit and keeps this original set unchanged.</span>
+                      </div>
+                      <select
+                        v-model="translationLanguageBySet[setItem.id]"
+                        class="translation-language-select"
+                        :disabled="loadingTranslationLanguages || isTranslationRunning(translationJobForSet(setItem))"
+                        @focus="fetchTranslationLanguages"
+                      >
+                        <option value="" disabled>
+                          {{ loadingTranslationLanguages ? 'Loading languages...' : 'Target language' }}
+                        </option>
+                        <option v-for="language in translationLanguages" :key="language" :value="language">
+                          {{ language }}
+                        </option>
+                      </select>
+                      <button
+                        class="btn btn-secondary btn-sm"
+                        type="button"
+                        :disabled="
+                          loadingTranslationLanguages ||
+                          translatingSetId === setItem.id ||
+                          isTranslationRunning(translationJobForSet(setItem))
+                        "
+                        @click="translateSetDocument(setItem)"
+                      >
+                        {{ translationButtonLabel(setItem) }}
+                      </button>
+                      <button
+                        v-if="translatedPdfUrl(setItem)"
+                        class="btn btn-primary btn-sm"
+                        type="button"
+                        @click="openTranslatedPdf(setItem)"
+                      >
+                        Open Translated PDF
+                      </button>
+                      <span v-if="translationJobForSet(setItem)" :class="translationStatusClass(translationJobForSet(setItem))">
+                        {{ translationStatusText(translationJobForSet(setItem)) }}
+                      </span>
+                    </div>
                     <ol class="set-question-list">
                       <li v-for="link in setItem.questions" :key="link.id">
                         <span>{{ link.displayOrder }}.</span>
@@ -4069,6 +4548,65 @@ watch(selectedQuestionBankIds, loadSelectedBankDetails, { deep: true })
   margin-bottom: 0.75rem;
 }
 
+.set-translation-box {
+  align-items: center;
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(96, 165, 250, 0.22);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: minmax(180px, 1fr) minmax(150px, 190px) auto auto auto;
+  margin-bottom: 0.85rem;
+  padding: 0.7rem;
+}
+
+.set-translation-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.16rem;
+  min-width: 0;
+}
+
+.set-translation-copy strong {
+  color: var(--text-primary);
+  font-size: 0.88rem;
+}
+
+.set-translation-copy span {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.translation-language-select {
+  background: rgba(15, 23, 42, 0.52);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  min-height: 38px;
+  padding: 0.45rem 0.65rem;
+}
+
+.translation-status {
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+  justify-self: end;
+  white-space: nowrap;
+}
+
+.translation-status-running {
+  color: var(--warning);
+}
+
+.translation-status-completed {
+  color: var(--success);
+}
+
+.translation-status-failed {
+  color: var(--error);
+}
+
 .set-question-list {
   display: flex;
   flex-direction: column;
@@ -4187,13 +4725,18 @@ watch(selectedQuestionBankIds, loadSelectedBankDetails, { deep: true })
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.24);
   color: #0f172a;
   font-family: Calibri, Arial, sans-serif;
-  font-size: 1rem;
-  line-height: 1.55;
+  font-size: 0.92rem;
+  line-height: 1.5;
   margin: 0 auto;
   min-height: 980px;
   outline: none;
   padding: 3rem 2.75rem;
   width: min(100%, 794px);
+}
+
+.paper-editor :deep(.question-paper-document) {
+  margin: 0 auto;
+  max-width: 453px;
 }
 
 .paper-editor :deep(h2),
@@ -4214,6 +4757,151 @@ watch(selectedQuestionBankIds, loadSelectedBankDetails, { deep: true })
 .paper-editor :deep(h4) {
   font-size: 1rem;
   margin: 1.5rem 0 0.65rem;
+}
+
+.paper-editor :deep(.paper-front-page),
+.paper-editor :deep(.paper-note-page) {
+  min-height: 970px;
+}
+
+.paper-editor :deep(.paper-front-page) {
+  padding-top: 0.4rem;
+}
+
+.paper-editor :deep(.paper-note-page) {
+  padding-top: 4.1rem;
+}
+
+.paper-editor :deep(.paper-document-count) {
+  margin: 0 0 1.7rem;
+}
+
+.paper-editor :deep(.paper-cover-topline) {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: space-between;
+  margin: 0 0 2.55rem;
+}
+
+.paper-editor :deep(.paper-cover-title) {
+  font-size: 0.92rem;
+  margin: 0 0 3rem;
+}
+
+.paper-editor :deep(.paper-cover-lines) {
+  margin: 0 0 1.45rem;
+}
+
+.paper-editor :deep(.paper-cover-lines p) {
+  margin: 0 0 1.35rem;
+}
+
+.paper-editor :deep(.paper-cover-instructions ol),
+.paper-editor :deep(.paper-note-list) {
+  margin: 0;
+  padding-left: 0;
+}
+
+.paper-editor :deep(.paper-general-list) {
+  counter-reset: general-instruction;
+  list-style: none;
+}
+
+.paper-editor :deep(.paper-general-list li) {
+  counter-increment: general-instruction;
+  margin-bottom: 1rem;
+  padding-left: 1.15rem;
+  position: relative;
+  text-align: justify;
+}
+
+.paper-editor :deep(.paper-general-list li::before) {
+  content: counter(general-instruction) ".";
+  font-weight: 700;
+  left: 0;
+  position: absolute;
+  top: 0;
+}
+
+.paper-editor :deep(.paper-note-header) {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: space-between;
+  margin: 0 0 1.45rem;
+}
+
+.paper-editor :deep(.paper-note-block) {
+  margin-top: 1.25rem;
+}
+
+.paper-editor :deep(.paper-roman-list),
+.paper-editor :deep(.paper-decimal-note-list) {
+  list-style: none;
+}
+
+.paper-editor :deep(.paper-roman-list) {
+  counter-reset: note-roman;
+}
+
+.paper-editor :deep(.paper-decimal-note-list) {
+  counter-reset: note-decimal;
+}
+
+.paper-editor :deep(.paper-roman-list > li),
+.paper-editor :deep(.paper-decimal-note-list > li) {
+  margin-bottom: 0.4rem;
+  padding-left: 1.25rem;
+  position: relative;
+}
+
+.paper-editor :deep(.paper-roman-list > li::before) {
+  content: "(" counter(note-roman, lower-roman) ") ";
+  counter-increment: note-roman;
+  left: 0;
+  position: absolute;
+}
+
+.paper-editor :deep(.paper-decimal-note-list > li::before) {
+  content: "(" counter(note-decimal) ") ";
+  counter-increment: note-decimal;
+  left: 0;
+  position: absolute;
+}
+
+.paper-editor :deep(.paper-section-note) {
+  margin-top: 0.75rem;
+}
+
+.paper-editor :deep(.paper-section-note-lines) {
+  margin: 1.1rem 0 1.25rem 0.65rem;
+}
+
+.paper-editor :deep(.paper-section-note-lines p) {
+  margin: 0 0 1rem;
+  text-align: justify;
+}
+
+.paper-editor :deep(.paper-page-break) {
+  align-items: center;
+  border-bottom: 1px dashed #94a3b8;
+  border-top: 1px dashed #94a3b8;
+  color: #64748b;
+  display: flex;
+  font-size: 0.75rem;
+  font-weight: 700;
+  justify-content: center;
+  margin: 1.5rem 0;
+  min-height: 1.4rem;
+  page-break-after: always;
+  text-transform: uppercase;
+}
+
+.paper-editor :deep(.paper-page-break)::before {
+  content: 'Page Break';
 }
 
 .paper-editor :deep(.paper-topline),
@@ -4310,6 +4998,7 @@ watch(selectedQuestionBankIds, loadSelectedBankDetails, { deep: true })
   }
 
   .generator-grid,
+  .set-translation-box,
   .set-summary-strip,
   .template-defaults-grid,
   .template-summary-grid,
@@ -4322,6 +5011,7 @@ watch(selectedQuestionBankIds, loadSelectedBankDetails, { deep: true })
   .filters-grid,
   .form-grid,
   .generator-grid,
+  .set-translation-box,
   .set-summary-strip,
   .template-picker-panel,
   .template-defaults-grid,

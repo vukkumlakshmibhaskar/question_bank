@@ -152,6 +152,68 @@ class TestPaperController {
       next(error);
     }
   }
+
+  async getTranslationLanguages(req, res, next) {
+    try {
+      const result = await testPaperService.getTranslationLanguages();
+      return res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getTranslationHealth(req, res, next) {
+    try {
+      const result = await testPaperService.getTranslationHealth();
+      return res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async translateQuestionPaperSet(req, res, next) {
+    try {
+      const result = await testPaperService.submitSetTranslation(
+        req.params.id,
+        req.params.setId,
+        req.body,
+        req.user
+      );
+      return res.status(202).json({
+        message: "Translation job submitted successfully",
+        ...result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getTranslationJobStatus(req, res, next) {
+    try {
+      const result = await testPaperService.getTranslationJobStatus(
+        req.params.id,
+        req.params.jobId,
+        req.user
+      );
+      return res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getTranslationJobResult(req, res, next) {
+    try {
+      const result = await testPaperService.getTranslationJobResult(
+        req.params.id,
+        req.params.jobId,
+        req.query.language,
+        req.user
+      );
+      return res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 module.exports = new TestPaperController();

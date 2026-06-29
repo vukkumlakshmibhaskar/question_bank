@@ -15,6 +15,8 @@ load_dotenv()
 HOST_IP = os.getenv("HOST_IP", "0.0.0.0")
 WORKERS = int(os.getenv("WORKERS", "1"))
 PYTHON = sys.executable
+TRANSLATION_PORT = int(os.getenv("TRANSLATION_PORT", "8024"))
+TRANSLATION_MODULE = os.getenv("TRANSLATION_MODULE", "tr51:app")
 
 ENGINES = [
     {
@@ -85,11 +87,17 @@ def validate_engine_config() -> None:
                 sys.exit(1)
             used_ports[port] = owner
 
+    if TRANSLATION_PORT in used_ports:
+        print(f"ERROR: Translation API port {TRANSLATION_PORT} is already used by {used_ports[TRANSLATION_PORT]}.")
+        sys.exit(1)
+    used_ports[TRANSLATION_PORT] = "TR"
+
 
 def all_runtime_ports() -> list[int]:
     ports: list[int] = []
     for engine in ENGINES:
         ports.extend([int(engine["gateway_port"]), *engine["ports"]])
+    ports.append(TRANSLATION_PORT)
     return ports
 
 
@@ -228,6 +236,52 @@ def launch_gateway(engine: dict) -> subprocess.Popen:
     return proc
 
 
+def launch_translation_api() -> subprocess.Popen:
+    env = os.environ.copy()
+    env["PORT"] = str(TRANSLATION_PORT)
+    env["SERVER_URL"] = env.get("SERVER_URL") or f"http://localhost:{TRANSLATION_PORT}"
+    env["PYTHONUNBUFFERED"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+
+    for index, key in enumerate(API_KEYS[:5], start=1):
+        env[f"GEMINI_API_KEY_{index}"] = key
+    if API_KEYS and not env.get("GEMINI_API_KEY_1"):
+        env["GEMINI_API_KEY_1"] = API_KEYS[0]
+
+    cmd = [
+        PYTHON,
+        "-m",
+        "uvicorn",
+        TRANSLATION_MODULE,
+        "--host",
+        HOST_IP,
+        "--port",
+        str(TRANSLATION_PORT),
+        "--workers",
+        "1",
+        "--log-level",
+        "info",
+        "--loop",
+        "asyncio",
+    ]
+
+    proc = subprocess.Popen(
+        cmd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        cwd=os.path.dirname(os.path.abspath(__file__)),
+    )
+
+    threading.Thread(
+        target=stream_output,
+        args=(proc.stdout, f"[TR:{TRANSLATION_PORT}]"),
+        daemon=True,
+    ).start()
+    return proc
+
+
 def shutdown(sig=None, frame=None) -> None:
     print("\nStopping all ADS tool backends...")
     stop_event.set()
@@ -270,6 +324,7 @@ ENGINE_KEYS = {
 print(f"   Standard Engine  -> {len(STD_KEYS)} key(s)")
 print(f"   Language Engine  -> {len(LANG_KEYS)} key(s)")
 print(f"   Question Crafter -> {len(QUESTION_KEYS)} key(s)\n")
+print(f"   Translation API  -> {min(len(API_KEYS), 5)} key slot(s), port {TRANSLATION_PORT}\n")
 
 for engine in ENGINES:
     ports = engine["ports"]
@@ -287,6 +342,12 @@ for engine in ENGINES:
     processes.append(gateway_proc)
     print(f"    Gateway live on {engine['gateway_port']} -> {ports[0]}-{ports[-1]}")
     time.sleep(0.2)
+
+print(f"--- Booting Translation API ({TRANSLATION_PORT}) ---")
+translation_proc = launch_translation_api()
+processes.append(translation_proc)
+print(f"    Translation API live on {TRANSLATION_PORT}")
+time.sleep(0.2)
 
 print(f"\nAll backend clusters live. Total active processes: {len(processes)}. Press Ctrl+C to stop.")
 print("=" * 60 + "\n")

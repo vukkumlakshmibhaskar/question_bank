@@ -1,0 +1,61 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# Runtime logs and local launcher output
+.qbank-runtime/
+*.log
+*.pid
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Node / frontend / backend generated output
+node_modules/
+**/node_modules/
+dist/
+/build/
+coverage/
+.vite/
+
+# Python virtual environments and caches
+.venv/
+venv/
+env/
+LB/.venv/
+LB/.venv_qbank/
+**/__pycache__/
+*.py[cod]
+*.pyo
+*$py.class
+.pytest_cache/
+.mypy_cache/
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Uploaded/generated assets
+backend/public/uploads/
+backend/public/generated/
+uploads/
+translated_PDFS/
+LB/translated_PDFS/
+LB/ops/codex-run-logs/
+fonts/
+LB/fonts/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+!.vscode/
+!.vscode/extensions.json
+!**/.vscode/
+!**/.vscode/extensions.json

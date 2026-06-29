@@ -7,6 +7,18 @@ const checkPermission = require("../middleware/rbac.middleware");
 router.use(authenticate);
 
 router.get(
+  "/translation/languages",
+  checkPermission("questions:read"),
+  testPaperController.getTranslationLanguages.bind(testPaperController)
+);
+
+router.get(
+  "/translation/health",
+  checkPermission("questions:read"),
+  testPaperController.getTranslationHealth.bind(testPaperController)
+);
+
+router.get(
   "/",
   checkPermission("questions:read"),
   testPaperController.getTestPapers.bind(testPaperController)
@@ -58,6 +70,24 @@ router.post(
   "/:id/sets/generate",
   checkPermission("questions:write"),
   testPaperController.generateQuestionPaperSets.bind(testPaperController)
+);
+
+router.post(
+  "/:id/sets/:setId/translate",
+  checkPermission("questions:write"),
+  testPaperController.translateQuestionPaperSet.bind(testPaperController)
+);
+
+router.get(
+  "/:id/translation-jobs/:jobId/status",
+  checkPermission("questions:read"),
+  testPaperController.getTranslationJobStatus.bind(testPaperController)
+);
+
+router.get(
+  "/:id/translation-jobs/:jobId/result",
+  checkPermission("questions:read"),
+  testPaperController.getTranslationJobResult.bind(testPaperController)
 );
 
 router.delete(

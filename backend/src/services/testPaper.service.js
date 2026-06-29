@@ -3,6 +3,7 @@ const assessmentTemplateRepository = require("../repositories/assessmentTemplate
 const auditService = require("./audit.service");
 const subjectAccessService = require("./subjectAccess.service");
 const sectionNormalizerService = require("./sectionNormalizer.service");
+const translationService = require("./translation.service");
 const { parsePagination } = require("../utils/pagination");
 
 const VALID_STATUSES = ["DRAFT", "SAVED", "QUESTIONS_GENERATED", "POSTED", "ARCHIVED"];
@@ -497,6 +498,63 @@ class TestPaperService {
     });
 
     return { success: true };
+  }
+
+  async getTranslationLanguages() {
+    return {
+      languages: translationService.getSupportedLanguages(),
+      apiBase: translationService.getApiBase(),
+    };
+  }
+
+  async getTranslationHealth() {
+    return translationService.health();
+  }
+
+  async submitSetTranslation(testPaperId, setId, payload, user) {
+    const paper = await testPaperRepository.findById(testPaperId);
+    this.ensureFound(paper);
+    await this.ensureCanAccess(paper, user);
+
+    const set = (paper.sets || []).find((item) => item.id === parseInt(setId));
+    if (!set) {
+      this.throwNotFound("Question paper set not found");
+    }
+
+    const result = await translationService.submitGeneratedSet(
+      paper,
+      set,
+      payload?.targetLanguages || payload?.targetLanguage
+    );
+
+    await auditService.log({
+      userId: user.id,
+      action: "TRANSLATE_TEST_PAPER_SET",
+      entityType: "TestPaperSet",
+      entityId: set.id,
+      newValue: {
+        testPaperId: paper.id,
+        setId: set.id,
+        jobId: result.job_id,
+        languages: result.languages,
+      },
+    });
+
+    return result;
+  }
+
+  async getTranslationJobStatus(testPaperId, jobId, user) {
+    const paper = await testPaperRepository.findById(testPaperId);
+    this.ensureFound(paper);
+    await this.ensureCanAccess(paper, user);
+    return translationService.getJobStatus(jobId);
+  }
+
+  async getTranslationJobResult(testPaperId, jobId, language, user) {
+    const paper = await testPaperRepository.findById(testPaperId);
+    this.ensureFound(paper);
+    await this.ensureCanAccess(paper, user);
+    return translationService.getJobResult(jobId, language);
   }
 
   async loadGenerationQuestionPool(questionBankIds, user) {
